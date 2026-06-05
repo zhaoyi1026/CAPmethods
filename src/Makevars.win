@@ -1,0 +1,2 @@
+# RcppArmadillo needs BLAS/LAPACK/Fortran linkage.
+PKG_LIBS = $(LAPACK_LIBS) $(BLAS_LIBS) $(FLIBS)

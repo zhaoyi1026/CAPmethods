@@ -1,0 +1,30 @@
+# Hand-maintained NAMESPACE for CAPmethods.
+
+useDynLib(CAPmethods, .registration = TRUE)
+
+# Base-distribution packages used throughout the method code.
+import(stats)
+import(utils)
+import(graphics)
+import(grDevices)
+
+# External packages (selective imports to avoid clashes).
+importFrom(MASS, ginv)
+importFrom(glmnet, glmnet, cv.glmnet)
+importFrom(nlme, lme, lmeControl)
+importFrom(brglm2, brmultinom)
+importFrom(foreach, foreach, "%dopar%")
+importFrom(doParallel, registerDoParallel)
+importFrom(parallel, detectCores, makeCluster, stopCluster)
+
+# User-facing entry points (one fit + one bootstrap per method where available).
+export(hdcap, hdcap_boot)
+export(lcap, lcap_boot)
+export(mcap, mcap_boot)
+export(coc, coc_boot)
+export(capmediation, capmediation_boot)
+export(hcap)
+export(cappcl, cappcl_boot)
+
+# Escape hatch: reach any internal function of a method by name.
+export(cap_internal)

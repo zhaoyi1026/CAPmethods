@@ -1,0 +1,36 @@
+Package: CAPmethods
+Type: Package
+Title: Covariate-Assisted Principal (CAP) Regression Methods
+Version: 0.1.0
+Date: 2026-06-05
+Authors@R: person("Yi", "Zhao", email = "zhaoyi1026@gmail.com",
+                  role = c("aut", "cre"))
+Description: A unified collection of covariate-assisted principal (CAP)
+    regression methods for relating subject-level covariates to the
+    covariance/heterogeneity structure of multivariate and longitudinal
+    outcomes. Includes high-dimensional CAP (HDCAP; with optional covariance
+    shrinkage, which also covers the classical CAP model when shrinkage is
+    disabled), longitudinal CAP with a time-invariant projection (LCAP),
+    multilevel CAP with cluster-varying loadings (MCAP), covariance-on-
+    covariance regression (CAP-CoC), CAP mediation, high-dimensional-covariance
+    CAP (HDcov/HCAP), and CAP clustering. Computational kernels are implemented
+    in C++ via 'RcppArmadillo'.
+License: GPL-3
+Encoding: UTF-8
+Depends: R (>= 4.0)
+Imports:
+    Rcpp,
+    MASS,
+    glmnet,
+    nlme,
+    brglm2,
+    foreach,
+    doParallel,
+    parallel,
+    stats,
+    utils,
+    graphics,
+    grDevices
+LinkingTo: Rcpp, RcppArmadillo
+NeedsCompilation: yes
+RoxygenNote: 7.3.1

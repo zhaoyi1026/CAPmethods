@@ -1,0 +1,22 @@
+# R build / session artifacts
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+*.Rproj
+
+# compiled objects (rebuilt by R CMD INSTALL)
+*.o
+*.so
+*.dll
+*.a
+src/*.o
+src/*.so
+src/*.dll
+
+# package tarballs / check dirs
+*.tar.gz
+*.Rcheck/
+
+# OS
+.DS_Store
