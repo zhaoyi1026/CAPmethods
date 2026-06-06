@@ -1,0 +1,191 @@
+---
+title: "Running the CAP methods"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Running the CAP methods}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE, comment = "#>",
+  fig.width = 8, fig.height = 3.2, out.width = "100%",
+  message = FALSE, warning = FALSE
+)
+library(CAPmethods)
+
+# small plotting helpers used throughout
+align <- function(e, t) { e <- as.numeric(e); t <- as.numeric(t); if (sum(e * t) < 0) -e else e }
+cosq  <- function(e, t) { e <- align(e, t); t <- as.numeric(t); abs(sum(e * t)) / sqrt(sum(e^2) * sum(t^2)) }
+loadbar <- function(est, tru, main, col = "steelblue") {
+  est <- align(est, tru); tru <- as.numeric(tru); p <- length(tru)
+  barplot(rbind(truth = tru, estimate = est), beside = TRUE, names.arg = paste0("V", seq_len(p)),
+          col = c("grey75", col), border = NA, main = main, ylab = "loading",
+          legend.text = TRUE, args.legend = list(x = "topright", bty = "n", cex = .85))
+  abline(h = 0, col = "grey40")
+}
+# methods print a small progress line; quiet() just hides it
+quiet <- function(x) { f <- tempfile(); sink(f); on.exit({ sink(); unlink(f) }); force(x) }
+```
+
+Every method in **CAPmethods** ships a built-in synthetic-data generator
+(`<method>_example()`) that returns data in exactly the shape the wrapper expects,
+plus a `truth` element so the estimates can be checked. The pattern is always:
+
+```r
+d   <- <method>_example()   # data + ground truth in d$truth
+fit <- <method>(...)        # run the method
+```
+
+Loadings `γ` are sign-invariant, so estimates are sign-aligned to the truth before
+plotting; the cosine to the truth is shown in each panel title. The two
+high-cost methods (HCAP, CAP-clustering) show their code but are **not run here**;
+their figures are pre-computed.
+
+## HDCAP — high-dimensional CAP
+
+`log(γ′ Σᵢ γ) = xᵢ′ β`. With `cov.shrinkage = FALSE` this is classical CAP; set
+`TRUE` (auto when `Tᵢ − 5 < p`) for the shrinkage estimator. `X` is `n × q`;
+`Y_list` is a list of `Tᵢ × p` matrices.
+
+```{r hdcap}
+d   <- hdcap_example()
+fit <- quiet(hdcap(d$Y_list, d$X, stop.crt = "nD", nD = 1, cov.shrinkage = FALSE))
+
+round(as.numeric(fit$beta), 3)        # ~ c(0, 0.9)
+
+par(mfrow = c(1, 2), mar = c(4, 4, 3, 1))
+loadbar(fit$gamma, d$truth$gamma, sprintf("HDCAP loadings γ  (cos %.3f)", cosq(fit$gamma, d$truth$gamma)))
+plot(d$X[, 2], fit$score[, 1], pch = 19, col = "steelblue",
+     xlab = "covariate x", ylab = "variance score", main = "scores rise with x")
+```
+
+## LCAP — longitudinal CAP (time-invariant projection)
+
+One time-invariant loading γ with a mixed model on the log-variance (fixed effects
+β, random intercept σ², random slopes Ω). `Y` is nested (subject → visit →
+`Tᵢᵥ × p`); `X` is a list of `nVᵢ × q` covariate matrices.
+
+```{r lcap}
+d   <- lcap_example()
+fit <- quiet(lcap(d$Y, d$X, stop.crt = "nD", nD = 1, cov.shrinkage = FALSE, verbose = FALSE))
+
+round(as.numeric(fit$beta), 3)        # (Intercept, time, dose) ~ c(0, -0.5, 0.6)
+
+par(mfrow = c(1, 2), mar = c(4, 4, 3, 1))
+loadbar(fit$gamma, d$truth$gamma, sprintf("LCAP loadings γ  (cos %.3f)", cosq(fit$gamma, d$truth$gamma)))
+bt <- as.numeric(fit$beta)[2:3]; tt <- as.numeric(d$truth$beta)[2:3]
+barplot(rbind(truth = tt, estimate = bt), beside = TRUE, names.arg = c("time", "dose"),
+        col = c("grey75", "darkorange"), border = NA, main = "fixed effects β", ylab = "coefficient",
+        legend.text = TRUE, args.legend = list(x = "bottomright", bty = "n", cex = .85))
+abline(h = 0, col = "grey40")
+```
+
+## MCAP — multilevel CAP (cluster-varying loadings)
+
+Each cluster `i` has its own loading `γᵢ ~ vMF(γ, κ)` around a population direction.
+`Y` is nested (cluster → unit → `Tᵢⱼ × p`); `X2` is a list of `nᵢ × q₂`
+random-effect covariate matrices.
+
+```{r mcap}
+d   <- mcap_example()
+fit <- quiet(mcap(d$Y, X1 = NULL, X2 = d$X2, data.type = "Y",
+                  stop.crt = "DfD", DfD.thred = 2, method = "CAP",
+                  H.type = "CAvgCov", Omega.diag = TRUE, verbose = FALSE))
+
+gpop <- fit$gamma[, 1]; m <- dim(fit$gamma.rnd)[3]
+clcos <- sapply(seq_len(m), function(k) cosq(fit$gamma.rnd[, 1, k], gpop))
+
+par(mfrow = c(1, 2), mar = c(4, 4, 3, 1))
+loadbar(gpop, d$truth$gamma, sprintf("MCAP population γ  (cos %.3f)", cosq(gpop, d$truth$gamma)), "purple")
+plot(seq_len(m), clcos, pch = 19, col = "purple", ylim = c(min(clcos) - .02, 1.001),
+     xlab = "cluster", ylab = "cos(γ_i, γ_pop)", main = sprintf("per-cluster loadings (κ̂=%.0f)", fit$kappa[1]))
+abline(h = mean(clcos), lty = 2, col = "grey50")
+```
+
+## CAP-CoC — covariance-on-covariance regression
+
+`log(γ′ Syᵢ γ) = α · log(θ′ Sxᵢ θ) + β′ Wᵢ`. `coc_d1()` estimates a single
+component (the full multi-direction selector is `coc()`). `Y`, `X` are lists of
+`T × q` and `T × p` matrices; `W` is `n × r`.
+
+```{r coc}
+d   <- coc_example()
+fit <- quiet(coc_d1(d$Y, d$X, d$W))
+
+round(as.numeric(fit$alpha), 3)       # ~ 0.8
+
+par(mfrow = c(1, 2), mar = c(4, 4, 3, 1))
+loadbar(fit$gamma, d$truth$gamma, sprintf("response γ  (α̂=%.2f, cos %.3f)", fit$alpha, cosq(fit$gamma, d$truth$gamma)), "darkcyan")
+loadbar(fit$theta, d$truth$theta, sprintf("predictor θ  (cos %.3f)", cosq(fit$theta, d$truth$theta)), "darkcyan")
+```
+
+## CAP-mediation — covariance mediator
+
+Exposure → `log(θ′ Σᵢ θ)` → scalar outcome. `X` is `n × q` (exposure + covariates);
+`M` is a list of `Tᵢ × p` mediator matrices; `Y` is a length-`n` outcome vector.
+
+```{r mediation}
+d   <- capmediation_example()
+fit <- quiet(capmediation(d$X, d$M, d$Y, stop.crt = "nD", nD = 1, verbose = FALSE))
+
+par(mfrow = c(1, 2), mar = c(4, 4, 3, 1))
+loadbar(fit$theta, d$truth$theta, sprintf("mediator θ  (cos %.3f)", cosq(fit$theta, d$truth$theta)), "seagreen")
+plot(fit$score[, 1], d$Y, pch = 19, col = "seagreen",
+     xlab = "mediator variance score", ylab = "outcome Y", main = "mediation path: M-score → Y")
+abline(lm(d$Y ~ fit$score[, 1]), col = "grey40", lwd = 2)
+```
+
+## HCAP — high-dimensional-covariate CAP
+
+Many subject covariates (`q` large) with sparse, `glmnet`-based selection. This is
+the most expensive method (cross-validated lasso per direction-iteration plus
+bootstrap inference), so it is **not evaluated in this vignette** — run the code
+below yourself (takes ~1 minute at this size).
+
+```{r hcap, eval = FALSE}
+d   <- hcap_example(n = 80, p = 5, q = 60, Ti = 60)   # q = 60 covariates
+fit <- hcap(d$X, d$Y_list, stop.crt = "nD", nD = 2, B = 5)
+
+# HCAP returns the nD directions as a basis of the signal subspace (any rotation
+# within it is equivalent), so compare the SUBSPACE, not individual columns:
+G  <- qr.Q(qr(fit$gamma_est)); Tr <- qr.Q(qr(d$truth$gamma))
+svd(t(G) %*% Tr)$d                                     # canonical correlations ~ c(1.00, 0.999)
+```
+
+The estimated basis, Procrustes-aligned to the truth (each direction matches
+almost exactly):
+
+![HCAP loadings, both directions](../man/figures/hcap.png)
+
+## CAP-clustering — clustering covariance patterns
+
+Clusters subjects whose covariance follows different covariate models, sharing a
+loading γ, with membership informed by `W` (multinomial via `brglm2`). The
+membership fit is slow, so this is **not evaluated here**.
+
+```{r clustering, eval = FALSE}
+d   <- cappcl_example()
+fit <- cappcl(d$Y, d$X, d$W, ncluster = 2, stop.crt = "nD", nD = 1)
+
+cosq(fit$gamma, d$truth$gamma)   # shared loading recovered, ~ 0.99
+fit$class                        # estimated cluster membership
+fit$beta                         # per-cluster variance-covariate coefficients
+```
+
+The shared loading is recovered; the right panel shows the two covariance regimes
+capPCL separates (variance score by estimated cluster):
+
+![CAP-clustering loadings and covariance regimes](../man/figures/clustering.png)
+
+## Notes
+
+- **Bootstrap inference:** `hdcap_boot()`, `lcap_boot()`, `mcap_boot()`,
+  `coc_boot()`, `capmediation_boot()`, `cappcl_boot()` add bootstrap SEs / CIs
+  (`sims =` sets the number of replicates).
+- **Direction selection:** `stop.crt = "nD"` (fix `nD`) or `stop.crt = "DfD"`
+  (data-driven via `DfD.thred`).
+- **Any internal function** of a method is reachable with
+  `cap_internal("<method>", "<fn>")`.
+```

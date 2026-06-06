@@ -32,5 +32,9 @@ Imports:
     graphics,
     grDevices
 LinkingTo: Rcpp, RcppArmadillo
+Suggests:
+    knitr,
+    rmarkdown
+VignetteBuilder: knitr
 NeedsCompilation: yes
 RoxygenNote: 7.3.1
