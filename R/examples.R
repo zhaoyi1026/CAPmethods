@@ -13,15 +13,26 @@
 #' Example data for the CAP methods
 #'
 #' Self-contained synthetic-data generators, one per method, returning data in
-#' exactly the shape the matching wrapper expects (plus a `truth` element with
-#' the data-generating parameters). Pair each with its wrapper, e.g.
-#' `d <- hdcap_example(); fit <- hdcap(d$Y_list, d$X, nD = 1, cov.shrinkage = FALSE)`.
+#' exactly the shape the matching wrapper expects, plus a `truth` element holding
+#' the data-generating parameters so estimates can be checked. Pair each with its
+#' [cap_fit] wrapper; `vignette("CAPmethods")` shows a worked run of each.
 #'
-#' @param n,m number of subjects (or clusters, for MCAP).
+#' @param n number of subjects.
+#' @param m number of clusters (MCAP).
+#' @param ni number of units per cluster (MCAP).
 #' @param p response dimension.
-#' @param ... method-specific size arguments documented in the source.
+#' @param q number of covariates (HCAP) or predictor-covariance dimension (CoC).
+#' @param Ti within-unit sample size (rows per response matrix).
+#' @param nV number of visits per subject (LCAP).
+#' @param Tx,Ty per-subject sample sizes for the predictor (`X`) and response
+#'   (`Y`) covariance matrices (CoC).
+#' @param kappa von Mises-Fisher concentration of the cluster loadings (MCAP).
 #' @param seed RNG seed.
-#' @return A named list of inputs plus `truth`.
+#' @return A named list of inputs (named as the matching wrapper expects) plus a
+#'   `truth` list of the data-generating parameters.
+#' @examples
+#' d <- hdcap_example()
+#' str(d, max.level = 1)
 #' @name cap_examples
 NULL
 
