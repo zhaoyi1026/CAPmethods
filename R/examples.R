@@ -1,0 +1,182 @@
+# Built-in example-data generators, one per method (mirroring the demo data in
+# the Shiny app). Each returns a list with the inputs the corresponding wrapper
+# expects plus a `truth` element holding the data-generating parameters, so the
+# estimates can be checked. See the package vignette / Examples.md for full runs.
+
+# symmetric PSD square root of  Phi %*% diag(eigs) %*% t(Phi)
+.cap_rootSig <- function(Phi, eigs) {
+  S <- Phi %*% diag(eigs, length(eigs)) %*% t(Phi); S <- (S + t(S)) / 2
+  e <- eigen(S, symmetric = TRUE)
+  e$vectors %*% diag(sqrt(pmax(e$values, 1e-8))) %*% t(e$vectors)
+}
+
+#' Example data for the CAP methods
+#'
+#' Self-contained synthetic-data generators, one per method, returning data in
+#' exactly the shape the matching wrapper expects (plus a `truth` element with
+#' the data-generating parameters). Pair each with its wrapper, e.g.
+#' `d <- hdcap_example(); fit <- hdcap(d$Y_list, d$X, nD = 1, cov.shrinkage = FALSE)`.
+#'
+#' @param n,m number of subjects (or clusters, for MCAP).
+#' @param p response dimension.
+#' @param ... method-specific size arguments documented in the source.
+#' @param seed RNG seed.
+#' @return A named list of inputs plus `truth`.
+#' @name cap_examples
+NULL
+
+#' @rdname cap_examples
+#' @export
+hdcap_example <- function(n = 80L, p = 6L, Ti = 60L, seed = 1L) {
+  set.seed(seed)
+  X <- cbind(`(Intercept)` = 1, cov = rnorm(n))         # n x 2 covariate matrix
+  Phi <- qr.Q(qr(matrix(rnorm(p * p), p, p)))
+  if (Phi[which.max(abs(Phi[, 1])), 1] < 0) Phi[, 1] <- -Phi[, 1]
+  beta <- c(0, 0.9)                                       # log-variance ~ X %*% beta
+  Y <- lapply(seq_len(n), function(i) {
+    eigs <- rep(0.4, p); eigs[1] <- exp(as.numeric(X[i, ] %*% beta))
+    matrix(rnorm(Ti * p), Ti, p) %*% .cap_rootSig(Phi, eigs)
+  })
+  list(X = X, Y_list = Y,
+       truth = list(gamma = Phi[, 1],
+                    beta = matrix(beta, ncol = 1,
+                                  dimnames = list(c("(Intercept)", "cov"), "D1"))))
+}
+
+#' @rdname cap_examples
+#' @export
+lcap_example <- function(n = 60L, p = 6L, nV = 6L, Ti = 40L, seed = 2024L) {
+  set.seed(seed)
+  tg <- seq(-0.5, 0.5, length.out = nV)
+  Phi <- qr.Q(qr(matrix(rnorm(p * p), p, p)))
+  if (Phi[which.max(abs(Phi[, 1])), 1] < 0) Phi[, 1] <- -Phi[, 1]
+  be <- c(Intercept = 0, time = -0.5, dose = 0.6)
+  Y <- X <- vector("list", n)
+  for (i in seq_len(n)) {
+    b0 <- be[["Intercept"]] + rnorm(1, 0, 0.3)
+    bt <- be[["time"]]      + rnorm(1, 0, 0.2)
+    bd <- be[["dose"]]      + rnorm(1, 0, 0.2)
+    dose <- round(rnorm(nV), 2)
+    Xi <- cbind(Intercept = 1, time = tg, dose = dose)
+    Yi <- vector("list", nV)
+    for (v in seq_len(nV)) {
+      eigs <- rep(0.5, p); eigs[1] <- exp(b0 + bt * tg[v] + bd * dose[v])
+      Yi[[v]] <- matrix(rnorm(Ti * p), Ti, p) %*% .cap_rootSig(Phi, eigs)
+    }
+    Y[[i]] <- Yi; X[[i]] <- Xi
+  }
+  names(Y) <- names(X) <- paste0("S", seq_len(n))
+  list(Y = Y, X = X, cov_names = c("time", "dose"),
+       truth = list(gamma = Phi[, 1],
+                    beta = matrix(be, ncol = 1, dimnames = list(names(be), "D1"))))
+}
+
+#' @rdname cap_examples
+#' @export
+mcap_example <- function(m = 12L, ni = 15L, p = 5L, Ti = 80L, kappa = 150, seed = 2024L) {
+  set.seed(seed)
+  rvmf <- cap_internal("mcap", "rvmf")              # bundled vMF sampler
+  gpop <- c(1, rep(0, p - 1))
+  G  <- rvmf(m, gpop, kappa)
+  Bg <- qr.Q(qr(matrix(rnorm(p * p), p, p)))
+  Y <- X2 <- vector("list", m); cl_cos <- numeric(m)
+  for (i in seq_len(m)) {
+    gi <- G[i, ] / sqrt(sum(G[i, ]^2)); cl_cos[i] <- abs(sum(gi * gpop))
+    B <- qr.Q(qr(cbind(gi, Bg)))[, seq_len(p)]; if (sum(B[, 1] * gi) < 0) B[, 1] <- -B[, 1]
+    eps <- rnorm(1, 0, 0.2); th <- rnorm(1, 0, 0.2); dose <- round(rnorm(ni), 2)
+    X2[[i]] <- matrix(dose, ni, 1, dimnames = list(NULL, "dose"))
+    Yi <- vector("list", ni)
+    for (j in seq_len(ni)) {
+      eigs <- rep(0.2, p); eigs[1] <- exp(dose[j] * (1 + th) + eps)
+      Yi[[j]] <- matrix(rnorm(Ti * p), Ti, p) %*% .cap_rootSig(B, eigs)
+    }
+    Y[[i]] <- Yi
+  }
+  names(Y) <- names(X2) <- paste0("Cl", seq_len(m))
+  list(Y = Y, X2 = X2, cov_names = "dose",
+       truth = list(gamma = gpop, kappa = kappa, cl_cos = cl_cos,
+                    beta = matrix(c(0, 1), ncol = 1,
+                                  dimnames = list(c("Intercept", "dose"), "D1"))))
+}
+
+#' @rdname cap_examples
+#' @export
+coc_example <- function(n = 80L, p = 10L, q = 8L, Tx = 80L, Ty = 80L, seed = 1L) {
+  set.seed(seed)
+  W <- cbind(1, group = rep(c(0, 1), length.out = n), age = scale(rnorm(n))[, 1])
+  alpha <- 0.8; beta <- c(0.2, 0.5, -0.3)
+  Phx <- qr.Q(qr(matrix(rnorm(p * p), p, p)))
+  Phy <- qr.Q(qr(matrix(rnorm(q * q), q, q)))
+  X <- Y <- vector("list", n)
+  for (i in seq_len(n)) {
+    lx <- rnorm(1, 0, 1.2); ex <- rep(0.2, p); ex[1] <- exp(lx)  # X variance on theta
+    X[[i]] <- matrix(rnorm(Tx * p), Tx, p) %*% .cap_rootSig(Phx, ex)
+    ly <- alpha * lx + sum(beta * W[i, ]); ey <- rep(0.2, q); ey[1] <- exp(ly)
+    Y[[i]] <- matrix(rnorm(Ty * q), Ty, q) %*% .cap_rootSig(Phy, ey)
+  }
+  list(Y = Y, X = X, W = W,
+       truth = list(gamma = Phy[, 1], theta = Phx[, 1], alpha = alpha,
+                    beta = matrix(beta, ncol = 1,
+                                  dimnames = list(c("(Intercept)", "group", "age"), "D1"))))
+}
+
+#' @rdname cap_examples
+#' @export
+capmediation_example <- function(n = 60L, p = 10L, Ti = 40L, seed = 1L) {
+  set.seed(seed)
+  x <- rep(c(0, 1), length.out = n); w <- scale(rnorm(n))[, 1]
+  X <- cbind(X = x, W1 = w)
+  Phi <- qr.Q(qr(matrix(rnorm(p * p), p, p)))
+  M <- vector("list", n); Y <- numeric(n)
+  for (i in seq_len(n)) {
+    lv <- 0 + 0.8 * x[i] + 0.4 * w[i] + rnorm(1, 0, 0.3)   # log M-variance on theta
+    eigs <- rep(0.4, p); eigs[1] <- exp(lv)
+    M[[i]] <- matrix(rnorm(Ti * p), Ti, p) %*% .cap_rootSig(Phi, eigs)
+    Y[i] <- 0 + 0.5 * x[i] + 0.3 * w[i] + 0.6 * lv + rnorm(1, 0, 0.3)
+  }
+  list(X = X, M = M, Y = Y, truth = list(theta = Phi[, 1], alpha_x = 0.8, beta = 0.6))
+}
+
+#' @rdname cap_examples
+#' @export
+hcap_example <- function(n = 60L, p = 5L, q = 40L, Ti = 50L, seed = 2023L) {
+  stopifnot(p == 5L, q >= 35L)
+  set.seed(seed)
+  s2 <- c(10, 20, 30); s3 <- c(15, 25, 35)
+  b0 <- matrix(0, q, p); b0[s2, 2] <- c(2, 2, -2); b0[s3, 3] <- c(1, -1, 1)
+  b0[1, ] <- sample(c(-10:-1, 1:10), p, replace = TRUE)
+  phi <- matrix(c( 0.447,  0.447,  0.447,  0.447,  0.447,
+                   0.447, -0.862,  0.138,  0.138,  0.138,
+                   0.447,  0.138, -0.862,  0.138,  0.138,
+                   0.447,  0.138,  0.138, -0.862,  0.138,
+                   0.447,  0.138,  0.138,  0.138, -0.862), nrow = p)
+  xmat <- cbind(1, matrix(rnorm(n * (q - 1)), n))
+  lp <- matrix(NA_real_, n, p)
+  idx1 <- colSums(b0[-1, , drop = FALSE]) != 0; idx0 <- !idx1
+  lp[, idx1] <- exp(xmat %*% b0[, idx1, drop = FALSE])
+  lp[, idx0] <- exp(sapply(b0[1, idx0], function(x) rnorm(n, x, 0.5)))
+  Y <- lapply(seq_len(n), function(i) {
+    Sig <- phi %*% diag(lp[i, ]) %*% t(phi); Sig <- (Sig + t(Sig)) / 2
+    MASS::mvrnorm(Ti, rep(0, p), Sig)
+  })
+  list(X = xmat, Y_list = Y, truth = list(gamma = phi[, 2:3], beta = b0))
+}
+
+#' @rdname cap_examples
+#' @export
+cappcl_example <- function(n = 80L, p = 6L, Ti = 100L, seed = 1L) {
+  set.seed(seed)
+  W <- cbind(1, age = scale(rnorm(n))[, 1])              # membership covariates
+  cl <- 1 + rbinom(n, 1, plogis(W %*% c(0, 2)))          # membership driven by W
+  X <- cbind(1, group = rep(c(0, 1), length.out = n))    # variance covariate
+  beta_true <- cbind(C1 = c(0.0, 0.8), C2 = c(0.5, -0.6))# cluster-specific variance models
+  Phi <- qr.Q(qr(matrix(rnorm(p * p), p, p)))
+  if (Phi[which.max(abs(Phi[, 1])), 1] < 0) Phi[, 1] <- -Phi[, 1]
+  base <- seq(0.8, 0.1, length.out = p)
+  Y <- lapply(seq_len(n), function(i) {
+    eigs <- base; eigs[1] <- exp(sum(X[i, ] * beta_true[, cl[i]]))
+    matrix(rnorm(Ti * p), Ti, p) %*% .cap_rootSig(Phi, eigs)
+  })
+  list(Y = Y, X = X, W = W,
+       truth = list(gamma = Phi[, 1], cluster = cl, beta = beta_true))
+}

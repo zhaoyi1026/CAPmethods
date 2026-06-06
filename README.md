@@ -23,6 +23,19 @@ Each method that supports bootstrap inference also exposes a `*_boot()` companio
 `capmediation_boot()`, `cappcl_boot()`). The escape hatch
 `cap_internal(method, fn)` returns any internal function of a method by name.
 
+Every method ships a built-in synthetic-data generator (`hdcap_example()`,
+`lcap_example()`, …) returning data in the exact shape the wrapper expects plus
+the ground truth, so a full run is two lines.
+
+## Examples & visualization
+
+See **[Examples.md](Examples.md)** for a worked, plotted walkthrough of every
+method — generate example data, fit, and a figure checking the estimates against
+the truth. A taste (HDCAP: estimated loadings vs truth, and subject variance
+scores rising with the covariate):
+
+![HDCAP example](man/figures/hdcap.png)
+
 ## Installation
 
 ```r

@@ -45,6 +45,8 @@ mcap_boot <- function(...) .cap_get("mcap", "lcap.beta.boot")(...)
 #' @export
 coc <- function(...) .cap_get("coc", "COCReg")(...)
 #' @export
+coc_d1 <- function(...) .cap_get("coc", "COCReg.D1")(...)   # single direction
+#' @export
 coc_boot <- function(...) .cap_get("coc", "COCReg.coef.boot")(...)
 
 # ---- CAP mediation

@@ -21,10 +21,14 @@ importFrom(parallel, detectCores, makeCluster, stopCluster)
 export(hdcap, hdcap_boot)
 export(lcap, lcap_boot)
 export(mcap, mcap_boot)
-export(coc, coc_boot)
+export(coc, coc_d1, coc_boot)
 export(capmediation, capmediation_boot)
 export(hcap)
 export(cappcl, cappcl_boot)
 
 # Escape hatch: reach any internal function of a method by name.
 export(cap_internal)
+
+# Built-in example-data generators (one per method).
+export(hdcap_example, lcap_example, mcap_example, coc_example)
+export(capmediation_example, hcap_example, cappcl_example)
