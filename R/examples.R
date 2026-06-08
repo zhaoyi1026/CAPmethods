@@ -20,11 +20,13 @@
 #' @param n number of subjects.
 #' @param m number of clusters (MCAP).
 #' @param ni number of units per cluster (MCAP).
-#' @param p response dimension.
-#' @param q number of covariates (HCAP) or predictor-covariance dimension (CoC).
+#' @param p response/mediator dimension; for CoC, the predictor (`X`) covariance
+#'   dimension.
+#' @param q number of covariates (HCAP); for CoC, the outcome (`Y`) covariance
+#'   dimension.
 #' @param Ti within-unit sample size (rows per response matrix).
 #' @param nV number of visits per subject (LCAP).
-#' @param Tx,Ty per-subject sample sizes for the predictor (`X`) and response
+#' @param Tx,Ty per-subject sample sizes for the predictor (`X`) and outcome
 #'   (`Y`) covariance matrices (CoC).
 #' @param kappa von Mises-Fisher concentration of the cluster loadings (MCAP).
 #' @param seed RNG seed.
@@ -112,23 +114,43 @@ mcap_example <- function(m = 12L, ni = 15L, p = 5L, Ti = 80L, kappa = 150, seed 
 
 #' @rdname cap_examples
 #' @export
-coc_example <- function(n = 80L, p = 10L, q = 8L, Tx = 80L, Ty = 80L, seed = 1L) {
+coc_example <- function(n = 150L, p = 10L, q = 5L, Tx = 150L, Ty = 150L, seed = 2024L) {
+  # Case-1 simulation of Zhao et al. (Biometrics 2025): p-dim predictor X and
+  # q-dim outcome Y covariances with TWO covariance-on-covariance pairs --
+  # predictor directions {1, 3} drive outcome directions {2, 4} with alpha = (3, 2)
+  # and covariate effects beta; the remaining directions carry covariate-free noise.
+  stopifnot(p >= 3L, q >= 4L)
+  set.seed(100); Gamma1 <- qr.Q(qr(matrix(runif(p * p), p, p)))      # predictor basis
+  for (j in seq_len(p)) if (Gamma1[which.max(abs(Gamma1[, j])), j] < 0) Gamma1[, j] <- -Gamma1[, j]
+  set.seed(500); Gamma2 <- qr.Q(qr(matrix(runif(q * q), q, q)))      # outcome basis
+  for (j in seq_len(q)) if (Gamma2[which.max(abs(Gamma2[, j])), j] < 0) Gamma2[, j] <- -Gamma2[, j]
+  x.eigen.m <- exp(seq(1, -2, length.out = p)); x.eigen.sd <- 0.5
+  y.eigen.m <- exp(seq(1, -2, length.out = q)); y.eigen.sd <- 0.5
+  x.idx <- c(1, 3); y.idx <- c(2, 4)
+  alpha <- c(3, 2); beta <- cbind(c(1, -1), c(-1, 1))
+
   set.seed(seed)
-  W <- cbind(1, group = rep(c(0, 1), length.out = n), age = scale(rnorm(n))[, 1])
-  alpha <- 0.8; beta <- c(0.2, 0.5, -0.3)
-  Phx <- qr.Q(qr(matrix(rnorm(p * p), p, p)))
-  Phy <- qr.Q(qr(matrix(rnorm(q * q), q, q)))
+  W <- cbind(Intercept = 1, group = rbinom(n, 1, 0.5))
+  L1 <- matrix(NA_real_, n, p)
+  for (j in seq_len(p)) L1[, j] <- exp(rnorm(n, log(x.eigen.m[j]), x.eigen.sd))
+  L2 <- matrix(NA_real_, n, q)
+  for (k in seq_len(q)) {
+    f <- which(y.idx == k)
+    L2[, k] <- if (length(f)) exp(alpha[f] * log(L1[, x.idx[f]]) + W %*% beta[, f])
+               else exp(rnorm(n, log(y.eigen.m[k]), y.eigen.sd))
+  }
   X <- Y <- vector("list", n)
   for (i in seq_len(n)) {
-    lx <- rnorm(1, 0, 1.2); ex <- rep(0.2, p); ex[1] <- exp(lx)  # X variance on theta
-    X[[i]] <- matrix(rnorm(Tx * p), Tx, p) %*% .cap_rootSig(Phx, ex)
-    ly <- alpha * lx + sum(beta * W[i, ]); ey <- rep(0.2, q); ey[1] <- exp(ly)
-    Y[[i]] <- matrix(rnorm(Ty * q), Ty, q) %*% .cap_rootSig(Phy, ey)
+    X[[i]] <- MASS::mvrnorm(Tx, rep(0, p), Gamma1 %*% diag(L1[i, ]) %*% t(Gamma1))
+    Y[[i]] <- MASS::mvrnorm(Ty, rep(0, q), Gamma2 %*% diag(L2[i, ]) %*% t(Gamma2))
   }
+  names(X) <- names(Y) <- paste0("S", seq_len(n))
+  Gt <- Gamma2[, y.idx, drop = FALSE]; colnames(Gt) <- c("P1", "P2")   # true outcome loadings
+  Tt <- Gamma1[, x.idx, drop = FALSE]; colnames(Tt) <- c("P1", "P2")   # true predictor loadings
   list(Y = Y, X = X, W = W,
-       truth = list(gamma = Phy[, 1], theta = Phx[, 1], alpha = alpha,
-                    beta = matrix(beta, ncol = 1,
-                                  dimnames = list(c("(Intercept)", "group", "age"), "D1"))))
+       truth = list(gamma = Gt, theta = Tt, alpha = alpha,
+                    beta = matrix(beta, nrow = 2,
+                                  dimnames = list(c("Intercept", "group"), c("P1", "P2")))))
 }
 
 #' @rdname cap_examples

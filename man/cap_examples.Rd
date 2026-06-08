@@ -17,7 +17,7 @@ lcap_example(n = 60L, p = 6L, nV = 6L, Ti = 40L, seed = 2024L)
 
 mcap_example(m = 12L, ni = 15L, p = 5L, Ti = 80L, kappa = 150, seed = 2024L)
 
-coc_example(n = 80L, p = 10L, q = 8L, Tx = 80L, Ty = 80L, seed = 1L)
+coc_example(n = 150L, p = 10L, q = 5L, Tx = 150L, Ty = 150L, seed = 2024L)
 
 capmediation_example(n = 60L, p = 10L, Ti = 40L, seed = 1L)
 
@@ -28,7 +28,8 @@ cappcl_example(n = 80L, p = 6L, Ti = 100L, seed = 1L)
 \arguments{
 \item{n}{number of subjects.}
 
-\item{p}{response dimension.}
+\item{p}{response/mediator dimension; for CoC, the predictor (\code{X}) covariance
+dimension.}
 
 \item{Ti}{within-unit sample size (rows per response matrix).}
 
@@ -42,9 +43,10 @@ cappcl_example(n = 80L, p = 6L, Ti = 100L, seed = 1L)
 
 \item{kappa}{von Mises-Fisher concentration of the cluster loadings (MCAP).}
 
-\item{q}{number of covariates (HCAP) or predictor-covariance dimension (CoC).}
+\item{q}{number of covariates (HCAP); for CoC, the outcome (\code{Y}) covariance
+dimension.}
 
-\item{Tx, Ty}{per-subject sample sizes for the predictor (\code{X}) and response
+\item{Tx, Ty}{per-subject sample sizes for the predictor (\code{X}) and outcome
 (\code{Y}) covariance matrices (CoC).}
 }
 \value{

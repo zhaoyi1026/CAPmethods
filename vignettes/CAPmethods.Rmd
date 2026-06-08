@@ -106,19 +106,27 @@ abline(h = mean(clcos), lty = 2, col = "grey50")
 
 ## CAP-CoC — covariance-on-covariance regression
 
-`log(γ′ Syᵢ γ) = α · log(θ′ Sxᵢ θ) + β′ Wᵢ`. `coc_d1()` estimates a single
-component (the full multi-direction selector is `coc()`). `Y`, `X` are lists of
-`T × q` and `T × p` matrices; `W` is `n × r`.
+`log(γ′ Σᵧᵢ γ) = α · log(θ′ Σₓᵢ θ) + β′ Wᵢ`. `X` (predictor) and `Y` (outcome) are
+lists of `Tₓ × p` and `Tᵧ × q` matrices; `W` is `n × r`. The example is the
+case-1 simulation of Zhao et al. (Biometrics 2025): `p = 10` predictor, `q = 5`
+outcome, two CoC pairs (`α = (3, 2)`). The recovering fit uses identity weights
+`Hy/Hx` (not the default average-covariance) and `burn.in = 200`; `nD = 1`
+recovers the leading pair.
 
 ```{r coc}
-d   <- coc_example()
-fit <- quiet(coc_d1(d$Y, d$X, d$W))
+d <- coc_example()
+p <- ncol(d$X[[1]]); q <- ncol(d$Y[[1]])
+fit <- quiet(coc(d$Y, d$X, d$W, stop.crt = "nD", nD = 1,
+                 Hy = diag(q), Hx = diag(p),
+                 cov.shrinkage.y = TRUE, cov.shrinkage.x = TRUE,
+                 burn.in = 200, ninitial = 5, seed = 100, verbose = FALSE))
 
-round(as.numeric(fit$alpha), 3)       # ~ 0.8
+round(as.numeric(fit$alpha), 3)       # ~ 3 (leading pair)
+round(as.numeric(fit$beta), 3)        # ~ c(1, -1)
 
 par(mfrow = c(1, 2), mar = c(4, 4, 3, 1))
-loadbar(fit$gamma, d$truth$gamma, sprintf("response γ  (α̂=%.2f, cos %.3f)", fit$alpha, cosq(fit$gamma, d$truth$gamma)), "darkcyan")
-loadbar(fit$theta, d$truth$theta, sprintf("predictor θ  (cos %.3f)", cosq(fit$theta, d$truth$theta)), "darkcyan")
+loadbar(fit$gamma[, 1], d$truth$gamma[, 1], sprintf("outcome γ  (α̂=%.2f, cos %.3f)", fit$alpha, cosq(fit$gamma[, 1], d$truth$gamma[, 1])), "darkcyan")
+loadbar(fit$theta[, 1], d$truth$theta[, 1], sprintf("predictor θ  (cos %.3f)", cosq(fit$theta[, 1], d$truth$theta[, 1])), "darkcyan")
 ```
 
 ## CAP-mediation — covariance mediator

@@ -16,7 +16,7 @@ fit <- <method>(...)           # run the method on it
 | HDCAP | `hdcap()` | `hdcap_example()` | covariate → covariance magnitude (one direction) |
 | LCAP | `lcap()` | `lcap_example()` | longitudinal, fixed + random effects |
 | MCAP | `mcap()` | `mcap_example()` | multilevel, cluster-varying loadings |
-| CAP-CoC | `coc_d1()` / `coc()` | `coc_example()` | covariance-on-covariance regression |
+| CAP-CoC | `coc()` | `coc_example()` | covariance-on-covariance regression (manuscript sim) |
 | CAP-mediation | `capmediation()` | `capmediation_example()` | covariance mediator |
 | HCAP | `hcap()` | `hcap_example()` | high-dimensional covariates (regularization + post-selection inference) |
 | CAP-clustering | `cappcl()` | `cappcl_example()` | clustering covariance patterns |
@@ -107,27 +107,39 @@ loading cosine to the population direction (their spread reflects κ̂).
 
 ## CAP-CoC — covariance-on-covariance regression
 
-Regresses the **variance of one set of matrices on the variance of another**:
-`log(γ′ Syᵢ γ) = α · log(θ′ Sxᵢ θ) + β′ Wᵢ`. It jointly finds the response
-direction γ, the predictor direction θ, the association α, and covariate effects β.
-`coc_d1()` estimates a single component; `coc()` runs the full multi-direction
-selection.
+Regresses the **variance of an outcome covariance on the variance of a predictor
+covariance**: `log(γ′ Σᵧᵢ γ) = α · log(θ′ Σₓᵢ θ) + β′ Wᵢ`. It jointly finds the
+outcome direction γ, the predictor direction θ, the association α, and covariate
+effects β. `coc()` runs the multi-direction selection (used here with `nD = 1`);
+`coc_d1()` estimates a single component directly.
 
-**Data:** `Y` and `X` are length-`n` lists of `T × q` and `T × p` matrices; `W` is
-an `n × r` covariate matrix.
+**Data:** `X` (predictor) and `Y` (outcome) are length-`n` lists of `Tₓ × p` and
+`Tᵧ × q` matrices; `W` is an `n × r` covariate matrix.
+
+The built-in example is the **case-1 simulation of Zhao et al. (Biometrics 2025)**:
+`p = 10` predictor / `q = 5` outcome, with two covariance-on-covariance pairs —
+predictor directions {1, 3} drive outcome directions {2, 4} with `α = (3, 2)` and
+`β = ((1,−1),(−1,1))`. The recovering fit uses **identity weights** `Hy = diag(q)`,
+`Hx = diag(p)` (the default average-covariance weight collapses to a background
+direction), `burn.in = 200`, and covariance shrinkage; `nD = 1` recovers the
+leading pair (the deflated 2nd direction is unstable).
 
 ```r
-d   <- coc_example()                    # 80 subjects, X is p = 10, Y is q = 8
-fit <- coc_d1(d$Y, d$X, d$W)
+d <- coc_example()                       # 150 subjects; X is p = 10, Y is q = 5
+p <- ncol(d$X[[1]]); q <- ncol(d$Y[[1]])
+fit <- coc(d$Y, d$X, d$W, stop.crt = "nD", nD = 1,
+           Hy = diag(q), Hx = diag(p),
+           cov.shrinkage.y = TRUE, cov.shrinkage.x = TRUE,
+           burn.in = 200, ninitial = 5, seed = 100, verbose = FALSE)
 
-fit$alpha    # covariance-on-covariance association  → ~ 0.8
-fit$gamma    # response (Y) loadings
+fit$alpha    # covariance-on-covariance association  → ~ 3 (leading pair)
+fit$gamma    # outcome (Y) loadings
 fit$theta    # predictor (X) loadings
-fit$beta     # covariate effects on Y-variance
+fit$beta     # covariate effects  → ~ c(1, -1)
 ```
 
-Recovers **α̂ = 0.88** (true 0.8), response **γ cosine ≈ 0.99**, predictor
-**θ cosine ≈ 0.88**.
+Recovers the leading pair: **α̂ = 2.89** (true 3), outcome **γ cosine ≈ 1.0**,
+predictor **θ cosine ≈ 1.0**, and **β̂ = (1.20, −0.96)** vs the true `(1, −1)`.
 
 ![CAP-CoC](man/figures/coc.png)
 
