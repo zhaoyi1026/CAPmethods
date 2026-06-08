@@ -131,18 +131,25 @@ loadbar(fit$theta[, 1], d$truth$theta[, 1], sprintf("predictor θ  (cos %.3f)", 
 
 ## CAP-mediation — covariance mediator
 
-Exposure → `log(θ′ Σᵢ θ)` → scalar outcome. `X` is `n × q` (exposure + covariates);
-`M` is a list of `Tᵢ × p` mediator matrices; `Y` is a length-`n` outcome vector.
+Treatment → `log(θ′ Σᵢ θ)` (a-path) → scalar outcome (b-path). `X` is `n × q`
+(treatment + optional covariates); `M` is a list of `Tᵢ × p` mediator matrices;
+`Y` is a length-`n` outcome vector. The example is the GMed `p10_q0` setting (Zhao
+et al.): a binary treatment shifts the mediator's variance along directions {2, 4}.
+The leading mediating direction recovers (θ cosine ≈ 0.99) and the a-path α̂ ≈ 1;
+the right panel shows the variance score rising under treatment.
 
 ```{r mediation}
 d   <- capmediation_example()
-fit <- quiet(capmediation(d$X, d$M, d$Y, stop.crt = "nD", nD = 1, verbose = FALSE))
+fit <- quiet(capmediation(d$X, d$M, d$Y, stop.crt = "DfD", DfD.thred = 2,
+                          Y.remove = FALSE, verbose = FALSE))
+
+j <- which.max(apply(d$truth$theta, 2, function(tt) cosq(fit$theta[, 1], tt)))  # matched true dir
+round(fit$coef["alpha", 1], 3)        # a-path (treatment -> variance) ~ 1
 
 par(mfrow = c(1, 2), mar = c(4, 4, 3, 1))
-loadbar(fit$theta, d$truth$theta, sprintf("mediator θ  (cos %.3f)", cosq(fit$theta, d$truth$theta)), "seagreen")
-plot(fit$score[, 1], d$Y, pch = 19, col = "seagreen",
-     xlab = "mediator variance score", ylab = "outcome Y", main = "mediation path: M-score → Y")
-abline(lm(d$Y ~ fit$score[, 1]), col = "grey40", lwd = 2)
+loadbar(fit$theta[, 1], d$truth$theta[, j], sprintf("mediator θ  (cos %.3f)", cosq(fit$theta[, 1], d$truth$theta[, j])), "seagreen")
+boxplot(fit$score[, 1] ~ d$X[, "X"], col = c("#cbe7d4", "#7fbf9b"), names = c("control", "treated"),
+        xlab = "treatment", ylab = "variance score", main = sprintf("a-path  (α̂=%.2f)", fit$coef["alpha", 1]))
 ```
 
 ## HCAP — high-dimensional-covariate CAP

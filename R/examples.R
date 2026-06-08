@@ -155,19 +155,37 @@ coc_example <- function(n = 150L, p = 10L, q = 5L, Tx = 150L, Ty = 150L, seed = 
 
 #' @rdname cap_examples
 #' @export
-capmediation_example <- function(n = 60L, p = 10L, Ti = 40L, seed = 1L) {
+capmediation_example <- function(n = 100L, p = 10L, Ti = 100L, seed = 100L) {
+  # Graph/covariance mediation example of Zhao et al. (the GMed "p10_q0" case,
+  # github.com/zhaoyi1026/GMed): a binary treatment X shifts the variance of a
+  # p-dim mediator M along two latent directions (mediator directions {2, 4});
+  # the outcome Y depends on those log-variances (the mediation pathway,
+  # b = (1, 1)) plus a direct treatment effect. Treatment -> mediator variance is
+  # the a-path (alpha = 1); the remaining directions carry treatment-free noise.
+  stopifnot(p >= 4L)
+  set.seed(100); Gamma <- qr.Q(qr(matrix(runif(p * p), p, p)))    # true mediator basis
+  for (j in seq_len(p)) if (Gamma[which.max(abs(Gamma[, j])), j] < 0) Gamma[, j] <- -Gamma[, j]
+  nz <- c(2, 4)                                                    # covariate-driven directions
+  alpha0 <- c(1, -1); alphaX <- c(1, 1); beta <- c(1, 1); gamma0 <- 1; gammaX <- 1
+  base <- seq(3, -1, length.out = 5)
+  eig  <- c(base, seq(-1.5, -3, length.out = p - length(base)))    # background log-eigenvalues
+  tau <- 0.1; sigma <- 0.1
   set.seed(seed)
-  x <- rep(c(0, 1), length.out = n); w <- scale(rnorm(n))[, 1]
-  X <- cbind(X = x, W1 = w)
-  Phi <- qr.Q(qr(matrix(rnorm(p * p), p, p)))
-  M <- vector("list", n); Y <- numeric(n)
-  for (i in seq_len(n)) {
-    lv <- 0 + 0.8 * x[i] + 0.4 * w[i] + rnorm(1, 0, 0.3)   # log M-variance on theta
-    eigs <- rep(0.4, p); eigs[1] <- exp(lv)
-    M[[i]] <- matrix(rnorm(Ti * p), Ti, p) %*% .cap_rootSig(Phi, eigs)
-    Y[i] <- 0 + 0.5 * x[i] + 0.3 * w[i] + 0.6 * lv + rnorm(1, 0, 0.3)
+  X0 <- rbinom(n, 1, 0.5)
+  X <- cbind(X = X0)
+  delta <- matrix(NA_real_, n, p)
+  for (j in seq_len(p)) {
+    it <- match(j, nz)
+    delta[, j] <- if (!is.na(it)) exp(alpha0[it] + X0 * alphaX[it] + rnorm(n, 0, tau))
+                  else exp(eig[j])
   }
-  list(X = X, M = M, Y = Y, truth = list(theta = Phi[, 1], alpha_x = 0.8, beta = 0.6))
+  M <- vector("list", n)
+  for (i in seq_len(n))
+    M[[i]] <- MASS::mvrnorm(Ti, rep(0, p), Gamma %*% diag(delta[i, ]) %*% t(Gamma))
+  Y <- as.numeric(gamma0 + X0 * gammaX + log(delta[, nz]) %*% beta + rnorm(n, 0, sigma))
+  Tt <- Gamma[, nz, drop = FALSE]; colnames(Tt) <- c("D1", "D2")
+  list(X = X, M = M, Y = Y,
+       truth = list(theta = Tt, alpha = alphaX, beta = beta, active = nz))
 }
 
 #' @rdname cap_examples

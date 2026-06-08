@@ -17,7 +17,7 @@ fit <- <method>(...)           # run the method on it
 | LCAP | `lcap()` | `lcap_example()` | longitudinal, fixed + random effects |
 | MCAP | `mcap()` | `mcap_example()` | multilevel, cluster-varying loadings |
 | CAP-CoC | `coc()` | `coc_example()` | covariance-on-covariance regression (manuscript sim) |
-| CAP-mediation | `capmediation()` | `capmediation_example()` | covariance mediator |
+| CAP-mediation | `capmediation()` | `capmediation_example()` | covariance mediator (GMed sim) |
 | HCAP | `hcap()` | `hcap_example()` | high-dimensional covariates (regularization + post-selection inference) |
 | CAP-clustering | `cappcl()` | `cappcl_example()` | clustering covariance patterns |
 
@@ -147,22 +147,37 @@ predictor **θ cosine ≈ 1.0**, and **β̂ = (1.20, −0.96)** vs the true `(1,
 
 ## CAP-mediation — covariance mediator
 
-Tests whether the **variance of a multivariate mediator** along a direction θ
-carries an exposure effect to a scalar outcome: exposure → `log(θ′ Σᵢ θ)` → `Y`.
+Tests whether a treatment acts on an outcome **through the variance of a
+multivariate mediator** along a latent direction θ: treatment → `log(θ′ Σᵢ θ)`
+(the **a-path**) → `Y` (the **b-path**), alongside a direct treatment effect.
+`coef` reports `alpha` (a-path), `beta` (b-path), `gamma`, `IE` (indirect /
+mediation effect) and `DE` (direct effect) per direction; `*_boot()` adds
+bootstrap inference.
 
-**Data:** `X` is an `n × q` design (exposure + covariates); `M` is a length-`n`
-list of `Tᵢ × p` mediator matrices; `Y` is a length-`n` outcome vector.
+**Data:** `X` is an `n × q` design (treatment + optional covariates); `M` is a
+length-`n` list of `Tᵢ × p` mediator matrices; `Y` is a length-`n` outcome vector.
+
+The built-in example is the **GMed `p10_q0` setting** of Zhao et al.
+([github.com/zhaoyi1026/GMed](https://github.com/zhaoyi1026/GMed)): a binary
+treatment shifts the mediator's variance along two latent directions ({2, 4}),
+and the outcome depends on those log-variances. `H` defaults to the average
+mediator covariance and `Y.remove = FALSE` matches that reference.
 
 ```r
-d   <- capmediation_example()           # 60 subjects, p = 10
-fit <- capmediation(d$X, d$M, d$Y, stop.crt = "nD", nD = 1, verbose = FALSE)
+d   <- capmediation_example()           # 100 subjects, p = 10, binary treatment
+fit <- capmediation(d$X, d$M, d$Y, stop.crt = "DfD", DfD.thred = 2,
+                    Y.remove = FALSE, verbose = FALSE)
 
-fit$theta   # mediator loading direction
-fit$coef    # path coefficients (exposure → mediator variance → outcome)
+fit$theta   # mediator loading direction(s)
+fit$coef    # alpha (a-path), beta (b-path), gamma, IE, DE  per direction
 ```
 
-Mediator direction **θ cosine ≈ 0.99**. The right panel shows the fitted
-mediator-variance → outcome path.
+The leading mediating direction is recovered: **θ cosine ≈ 0.99**, and the
+treatment → mediator-variance **a-path α̂ ≈ 1.0** (true 1) — the right panel shows
+the mediator's variance score rising under treatment. (The b-path / indirect
+effect is attenuated at finite `Tᵢ` because the per-subject covariance is
+estimated from `Tᵢ` rows, so the bootstrap companion `capmediation_boot()` is the
+intended route for indirect-effect inference.)
 
 ![CAP-mediation](man/figures/mediation.png)
 

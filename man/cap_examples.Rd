@@ -19,7 +19,7 @@ mcap_example(m = 12L, ni = 15L, p = 5L, Ti = 80L, kappa = 150, seed = 2024L)
 
 coc_example(n = 150L, p = 10L, q = 5L, Tx = 150L, Ty = 150L, seed = 2024L)
 
-capmediation_example(n = 60L, p = 10L, Ti = 40L, seed = 1L)
+capmediation_example(n = 100L, p = 10L, Ti = 100L, seed = 100L)
 
 hcap_example(n = 60L, p = 5L, q = 40L, Ti = 50L, seed = 2023L)
 
