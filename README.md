@@ -15,7 +15,7 @@ The computational kernels are implemented in C++ via
 | `mcap()` | Multilevel CAP | cluster-varying loadings (von Mises–Fisher) |
 | `coc()` | Covariance-on-covariance regression | |
 | `capmediation()` | CAP mediation | |
-| `hcap()` | High-dimensional-covariance CAP (HCAP) | `glmnet`-based pipeline |
+| `hcap()` | CAP with high-dimensional covariates | regularization and post-selection inference by multiple splitting |
 | `cappcl()` | CAP clustering | covariance-matrix clustering |
 
 Each method that supports bootstrap inference also exposes a `*_boot()` companion

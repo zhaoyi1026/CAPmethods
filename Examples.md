@@ -1,8 +1,8 @@
 # Running the CAP methods — worked examples
 
-Every method ships a built-in synthetic-data generator (`*_example()`, mirroring
-the "built-in example" in the Shiny app) that returns data in exactly the shape
-the wrapper expects, plus a `truth` element so you can check the estimates. The
+Every method ships a built-in synthetic-data generator (`*_example()`) that
+returns data in exactly the shape the wrapper expects, plus a `truth` element so
+you can check the estimates. The
 pattern is always:
 
 ```r
@@ -18,7 +18,7 @@ fit <- <method>(...)           # run the method on it
 | MCAP | `mcap()` | `mcap_example()` | multilevel, cluster-varying loadings |
 | CAP-CoC | `coc_d1()` / `coc()` | `coc_example()` | covariance-on-covariance regression |
 | CAP-mediation | `capmediation()` | `capmediation_example()` | covariance mediator |
-| HCAP | `hcap()` | `hcap_example()` | high-dimensional covariates (sparse loadings) |
+| HCAP | `hcap()` | `hcap_example()` | high-dimensional covariates (regularization + post-selection inference) |
 | CAP-clustering | `cappcl()` | `cappcl_example()` | clustering covariance patterns |
 
 All figures below are produced by the code shown (base graphics, no extra
@@ -161,7 +161,7 @@ mediator-variance → outcome path.
 Handles **many subject covariates** (`q` large) with sparse, `glmnet`-based
 selection, returning `nD` response loadings and de-biased inference for the
 covariate effects. This is the most expensive method (cross-validated lasso per
-direction-iteration plus bootstrap inference) — use modest sizes when exploring.
+direction-iteration plus post-selection inference) — use modest sizes when exploring.
 
 **Data:** `X` is an `n × q` covariate matrix (here `q = 60`); `Y_list` is a
 length-`n` list of `Tᵢ × p` matrices (`p = 5`).
