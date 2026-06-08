@@ -79,6 +79,30 @@ package namespace. All C++ kernels compile into one shared object; each carries 
 per-method symbol prefix (`hd_`, `lcap_`, `mlcap_`, `coc_`, `med_`, `hdcov_`,
 `cluster_`) and is registered in `src/init.c`.
 
+## References
+
+- **`hdcap()` — high-dimensional CAP** (and the classical CAP it subsumes with
+  `cov.shrinkage = FALSE`):
+  - Zhao, Y., Caffo, B., Luo, X., & Alzheimer's Disease Neuroimaging Initiative
+    (2021). Principal regression for high dimensional covariance matrices.
+    *Electronic Journal of Statistics*, 15(2), 4192.
+    <https://doi.org/10.1214/21-EJS1887>
+  - Zhao, Y., Wang, B., Mostofsky, S. H., Caffo, B. S., & Luo, X. (2021). Covariate
+    assisted principal regression for covariance matrix outcomes. *Biostatistics*,
+    22(3), 629–645. <https://doi.org/10.1093/biostatistics/kxz057>
+- **`lcap()` — longitudinal CAP**: Zhao, Y., Caffo, B. S., & Luo, X. (2024).
+  Longitudinal regression of covariance matrix outcomes. *Biostatistics*, 25(2),
+  385–401. <https://doi.org/10.1093/biostatistics/kxac045>
+- **`coc()` — covariance-on-covariance regression**: Zhao, Y., & Zhao, Y. (2025).
+  Covariance-on-covariance regression. *Biometrics*, 81(3), ujaf097.
+  <https://doi.org/10.1093/biomtc/ujaf097>
+- **`capmediation()` — mediation with a graph mediator**: Xu, Y., & Zhao, Y. (2025).
+  Mediation analysis with graph mediator. *Biostatistics*, 26(1), kxaf004.
+  <https://doi.org/10.1093/biostatistics/kxaf004>
+
+`mcap()` (multilevel CAP), `hcap()` (CAP with high-dimensional covariates), and
+`cappcl()` (CAP clustering) do not have an associated publication listed yet.
+
 ## License
 
 GPL-3.
