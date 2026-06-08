@@ -157,11 +157,13 @@ bootstrap inference.
 **Data:** `X` is an `n × q` design (treatment + optional covariates); `M` is a
 length-`n` list of `Tᵢ × p` mediator matrices; `Y` is a length-`n` outcome vector.
 
-The built-in example is the **GMed `p10_q0` setting** of Zhao et al.
-([github.com/zhaoyi1026/GMed](https://github.com/zhaoyi1026/GMed)): a binary
-treatment shifts the mediator's variance along two latent directions ({2, 4}),
-and the outcome depends on those log-variances. `H` defaults to the average
-mediator covariance and `Y.remove = FALSE` matches that reference.
+The built-in example reproduces the demo in the **GMed** repository's `example.R`
+([github.com/zhaoyi1026/GMed](https://github.com/zhaoyi1026/GMed) — see
+[`example.R`](https://github.com/zhaoyi1026/GMed/blob/main/example.R)), the
+`p10_q0` setting of Zhao et al.: a binary treatment shifts the mediator's variance
+along two latent directions ({2, 4}), and the outcome depends on those
+log-variances. As in that example, `H` defaults to the average mediator covariance
+and `Y.remove = FALSE`.
 
 ```r
 d   <- capmediation_example()           # 100 subjects, p = 10, binary treatment

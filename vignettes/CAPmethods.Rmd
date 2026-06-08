@@ -133,8 +133,10 @@ loadbar(fit$theta[, 1], d$truth$theta[, 1], sprintf("predictor θ  (cos %.3f)", 
 
 Treatment → `log(θ′ Σᵢ θ)` (a-path) → scalar outcome (b-path). `X` is `n × q`
 (treatment + optional covariates); `M` is a list of `Tᵢ × p` mediator matrices;
-`Y` is a length-`n` outcome vector. The example is the GMed `p10_q0` setting (Zhao
-et al.): a binary treatment shifts the mediator's variance along directions {2, 4}.
+`Y` is a length-`n` outcome vector. The example reproduces the demo in the
+[GMed repository](https://github.com/zhaoyi1026/GMed)'s `example.R` (the `p10_q0`
+setting of Zhao et al.): a binary treatment shifts the mediator's variance along
+directions {2, 4}.
 The leading mediating direction recovers (θ cosine ≈ 0.99) and the a-path α̂ ≈ 1;
 the right panel shows the variance score rising under treatment.
 
