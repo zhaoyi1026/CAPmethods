@@ -1,8 +1,7 @@
 # capcov — CAP family of covariance-regression methods (Python)
 
 A Python package porting the **Covariate Assisted Principal (CAP)** family of
-covariance-matrix regression methods from their R reference implementations
-(the `CAP*/Vn` folders one level up).
+covariance-matrix regression methods from their R reference implementations.
 
 > **CAP is not a separate module.** As requested, plain CAP is obtained from
 > HDCAP with shrinkage off: `capcov.cap_reg(Y, X, cov_shrinkage=False)`. HDCAP
@@ -10,15 +9,15 @@ covariance-matrix regression methods from their R reference implementations
 
 ## Status
 
-| Module | Method | Status | R source |
-|--------|--------|--------|----------|
-| `hdcap` | **HDCAP / CAP** | ✅ implemented, **verified vs R** | `HDCAP/V6` |
-| `coc` | **CAP-CoC** (covariance-on-covariance) | ✅ implemented, **verified vs R** | `CAP-CoC/V3` |
-| `lcap` | **LCAP** (γ-invariant longitudinal) | ✅ implemented, **verified vs R** | `LCAP_gamma-invar/V6` |
-| `mcap` | MCAP (γ-varying multilevel, vMF) | ⬜ planned (stub) | `LCAP_gamma-var/V4` |
-| `mediation` | **CAP-mediation** (graph mediator) | ✅ implemented (approx.), **verified vs R** | `CAP-mediation/V4` |
-| `clustering` | **CAP-clustering** (PCL) | ✅ implemented (approx.), truth-verified | `CAP-clustering/V4` |
-| `hdcov` | CAP-HDcov (HCAP, high-dim covariates) | ⬜ planned (stub) | `CAP-HDcov/V2` |
+| Module | Method | Status |
+|--------|--------|--------|
+| `hdcap` | **HDCAP / CAP** | ✅ implemented, **verified vs R** |
+| `coc` | **CAP-CoC** (covariance-on-covariance) | ✅ implemented, **verified vs R** |
+| `lcap` | **LCAP** (γ-invariant longitudinal) | ✅ implemented, **verified vs R** |
+| `mcap` | MCAP (γ-varying multilevel, vMF) | ⬜ planned (stub) |
+| `mediation` | **CAP-mediation** (graph mediator) | ✅ implemented (approx.), **verified vs R** |
+| `clustering` | **CAP-clustering** (PCL) | ✅ implemented (approx.), truth-verified |
+| `hdcov` | CAP-HDcov (HCAP, high-dim covariates) | ⬜ planned (stub) |
 
 The package is installable now with HDCAP/CAP, CAP-CoC, LCAP, CAP-clustering, and
 CAP-mediation working; the remaining modules (MCAP, CAP-HDcov) import but raise
@@ -154,7 +153,7 @@ cf["class"], cf["logLik"]
 
 ## Verification
 
-Validated against the R `HDCAP/V6::capReg` on identical simulated data
+Validated against the R `capReg` on identical simulated data
 (`tests/` has the R-free regression tests; the R cross-check script lives in the
 project history):
 
@@ -164,7 +163,7 @@ project history):
   shrinkage-weight iteration path differs slightly between the RNG-seeded R init
   and the Python init; both converge to the same estimate and recover the truth).
 
-CAP-CoC validated against R `CAP-CoC/V3::COCReg` on identical simulated data:
+CAP-CoC validated against R `COCReg` on identical simulated data:
 
 - `cov.ls` / `cov.sk.x` / `cov.sk.y` covariance kernels: **bit-identical** (max|Δ| ≈ 1e-15).
 - **`COCReg.coef`** (alpha/beta given gamma, theta): match within ~1e-7 (no
@@ -175,7 +174,7 @@ CAP-CoC validated against R `CAP-CoC/V3::COCReg` on identical simulated data:
 - **`COCReg.coef.asmp`** asymptotic inference (α, β SE / statistic / p-value /
   CI): identical to 4 decimals.
 
-LCAP validated against R `LCAP_gamma-invar/V6::capReg` on identical simulated data:
+LCAP validated against R `capReg` on identical simulated data:
 
 - **`cap_beta`** (random-effects fit at a fixed gamma), both no-shrinkage and
   shrinkage: β, σ², Ω all **bit-identical** (max|Δ| ≈ 1e-16).
@@ -187,7 +186,7 @@ LCAP validated against R `LCAP_gamma-invar/V6::capReg` on identical simulated da
   (Multi-start γ₀ uses numpy's RNG, so individual starts differ from R's, but the
   start-robust objective minimum agrees.)
 
-CAP-clustering validated against R `CAP-clustering/V4::capPCL`:
+CAP-clustering validated against R `capPCL`:
 
 - Covariance kernels (`smat` second-moment, projected `score`, weighted `accum`,
   `eigen.solve`) and `diag.level`: **bit-identical** (max|Δ| = 0).
@@ -201,7 +200,7 @@ CAP-clustering validated against R `CAP-clustering/V4::capPCL`:
   differ slightly from R; assignments/β/γ agree. This is a statistically-
   equivalent port, not bit-identical (R's EM is single-start + brmultinom).
 
-CAP-mediation validated against R `CAP-mediation/V4::CAPMediation_D1`:
+CAP-mediation validated against R `CAPMediation_D1`:
 
 - Covariance kernels (`med_cov`, projected `score`, weighted `accum`,
   `eigen.solve`): bit-identical.
