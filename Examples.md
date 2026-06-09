@@ -13,7 +13,7 @@ fit <- <method>(...)           # run the method on it
 
 | Method | Fit wrapper | Example | Demonstrates |
 |--------|-------------|---------|--------------|
-| HDCAP | `hdcap()` | `hdcap_example()` | covariate → covariance magnitude (one direction) |
+| HDCAP | `hdcap()` | `hdcap_example()` | covariate → covariance magnitude (two directions) |
 | LCAP | `lcap()` | `lcap_example()` | longitudinal, fixed + random effects |
 | MCAP | `mcap()` | `mcap_example()` | multilevel, cluster-varying loadings |
 | CAP-CoC | `coc()` | `coc_example()` | covariance-on-covariance regression (manuscript sim) |
@@ -34,20 +34,23 @@ direction γ: `log(γ′ Σᵢ γ) = xᵢ′ β`. With `cov.shrinkage = FALSE` t
 classical CAP model; set `TRUE` (auto when `Tᵢ − 5 < p`) for the shrinkage
 estimator.
 
-**Data:** `X` is an `n × q` covariate matrix; `Y_list` is a length-`n` list of
-`Tᵢ × p` response matrices.
+**Data:** the manuscript's HD-shrinkage simulation (`210309/eg`): `p = 20`,
+`n = 100` subjects, `Tᵢ = 100`, one binary covariate (`group`), with **two**
+covariate-driven directions (basis cols 2 and 4, group effects `−1` and `+1`).
+`X` is `n × q`; `Y_list` is a length-`n` list of `Tᵢ × p` response matrices.
 
 ```r
-d   <- hdcap_example()                  # 80 subjects, p = 6, one covariate-driven direction
-fit <- hdcap(d$Y_list, d$X, stop.crt = "nD", nD = 1, cov.shrinkage = FALSE)
+d   <- hdcap_example()                  # p = 20, two covariate-driven directions
+fit <- hdcap(d$Y_list, d$X, stop.crt = "nD", nD = 2, cov.shrinkage = TRUE)
 
-fit$beta      # coefficient on the variance scale  → ~ c(0, 0.9)
-fit$gamma     # estimated loading direction (p-vector)
+fit$gamma     # two estimated loading directions (p × 2)
+fit$beta      # group effect ~ +1 / -1 on the two directions
 ```
 
-Recovers the truth: **β̂ = (−0.01, 0.90)** vs the true `(0, 0.9)`, and the loading
-**γ cosine ≈ 0.997**. The right panel shows each subject's variance score rising
-with the covariate, exactly as `β > 0` implies.
+With shrinkage on, `nD = 2` recovers **both** covariate-driven directions
+(**γ cosine ≈ 0.99 / 0.99**, **β̂(group) ≈ +1 / −1**). Increasing `nD` (or the DfD
+criterion) additionally extracts the high-variance covariate-free directions,
+whose `β̂(group) ≈ 0` correctly indicates no covariate effect.
 
 ![HDCAP](man/figures/hdcap.png)
 
@@ -55,24 +58,28 @@ with the covariate, exactly as `β > 0` implies.
 
 ## LCAP — longitudinal CAP (time-invariant projection)
 
-A single time-invariant loading γ with a mixed model on the log-variance:
-fixed effects β for time-varying covariates plus random intercept (σ²) and
-random slopes (Ω). Visit `v` of subject `i` contributes a `Tᵢᵥ × p` matrix.
+A time-invariant loading γ with a mixed model on the log-variance: fixed effects
+β plus random intercept (σ²) and random slopes (Ω). Visit `v` of subject `i`
+contributes a `Tᵢᵥ × p` matrix. The example is the manuscript's `p20_q3`
+simulation: `p = 20`, 100 subjects × ~5 visits, two within-subject covariates,
+with **two** covariate-driven directions (basis cols 2 and 4).
 
 **Data:** `Y` is a nested list (subject → visit → `Tᵢᵥ × p`); `X` is a list of
 `nVᵢ × q` covariate matrices (one row per visit).
 
 ```r
-d   <- lcap_example()                   # 60 subjects × 6 visits, p = 6
-fit <- lcap(d$Y, d$X, stop.crt = "nD", nD = 1, cov.shrinkage = FALSE, verbose = FALSE)
+d   <- lcap_example()                   # p = 20, two covariate-driven directions
+fit <- lcap(d$Y, d$X, stop.crt = "nD", nD = 2, cov.shrinkage = TRUE, verbose = FALSE)
 
-fit$beta          # fixed effects (Intercept, time, dose) → ~ c(0, -0.5, 0.6)
+fit$gamma         # two estimated loading directions (p × 2)
+fit$beta          # fixed effects (Intercept, x1, x2) per direction
 fit$beta0.sigma2  # random-intercept variance
 fit$beta1.Omega   # random-slope covariance
 ```
 
-Fixed effects recover the truth: **β̂ = (−0.01, −0.55, 0.63)** vs `(0, −0.5, 0.6)`;
-**γ cosine ≈ 0.999**.
+With shrinkage on, `nD = 2` recovers **both** covariate-driven directions
+(**γ cosine ≈ 0.98 / 0.94**) and the fixed effects match the truth. `nD = 1`
+recovers the leading direction faster; the DfD criterion selects the count.
 
 ![LCAP](man/figures/lcap.png)
 
@@ -84,22 +91,26 @@ Units nested in clusters; each cluster `i` has its **own** loading `γᵢ` drawn
 around a population direction γ via a von Mises–Fisher distribution (concentration
 κ). The log-variance has cluster random intercept/slopes.
 
-**Data:** `Y` is a nested list (cluster → unit → `Tᵢⱼ × p`); `X2` is a list of
-`nᵢ × q₂` random-effect covariate matrices (no intercept column).
+**Data:** the manuscript's γ-varying simulation (`p5_q4_2-1`, case 1): `p = 5`,
+two covariate-driven directions, `m = 20` clusters. `Y` is a nested list
+(cluster → unit → `Tᵢⱼ × p`); `X1` is a list of `nᵢ × q₁` **fixed**-effect
+covariate matrices, `X2` a list of `nᵢ × q₂` **random**-slope covariate matrices
+(no intercept columns). The number of directions is chosen by `nD` or `DfD`.
 
 ```r
-d   <- mcap_example()                   # 12 clusters × 15 units, p = 5
-fit <- mcap(d$Y, X1 = NULL, X2 = d$X2, data.type = "Y",
-            stop.crt = "DfD", DfD.thred = 2, method = "CAP",
+d   <- mcap_example()                   # 20 clusters, 2 directions, X1 + X2
+fit <- mcap(d$Y, X1 = d$X1, X2 = d$X2, data.type = "Y",
+            stop.crt = "nD", nD = 2, ninitial = 8, method = "CAP",
             H.type = "CAvgCov", Omega.diag = TRUE, verbose = FALSE)
 
 fit$gamma       # population loadings (p × nD)
 fit$gamma.rnd   # per-cluster loadings (p × nD × m)
-fit$kappa       # estimated vMF concentration
+fit$kappa       # estimated vMF concentration per direction
 ```
 
-Population loading **γ cosine ≈ 0.98**. The right panel shows each cluster's
-loading cosine to the population direction (their spread reflects κ̂).
+Both directions recover: population loading **γ cosine ≈ 0.99 / 0.96**, and the
+fixed-effect `β` match the truth. `nD = 1` recovers the leading direction faster;
+the `DfD` criterion selects the number of directions automatically.
 
 ![MCAP](man/figures/mcap.png)
 
@@ -157,10 +168,11 @@ bootstrap inference.
 **Data:** `X` is an `n × q` design (treatment + optional covariates); `M` is a
 length-`n` list of `Tᵢ × p` mediator matrices; `Y` is a length-`n` outcome vector.
 
-The built-in example has a binary treatment that shifts the mediator's variance
-along two latent directions ({2, 4}), and the outcome depends on those
-log-variances. `H` defaults to the average mediator covariance and
-`Y.remove = FALSE`.
+The built-in example has 100 subjects, a mediator of dimension `p = 10` measured
+with `Tᵢ = 150` samples each, and a binary treatment that shifts the mediator's
+variance along one latent direction θ; the outcome depends on that log-variance.
+The true indirect effect is `α·β = 0.8 × 0.7 = 0.56`. `H` defaults to the average
+mediator covariance and `Y.remove = FALSE`.
 
 ```r
 d   <- capmediation_example()           # 100 subjects, p = 10, binary treatment
@@ -172,11 +184,10 @@ fit$coef    # alpha (a-path), beta (b-path), gamma, IE, DE  per direction
 ```
 
 The leading mediating direction is recovered: **θ cosine ≈ 0.99**, and the
-treatment → mediator-variance **a-path α̂ ≈ 1.0** (true 1) — the right panel shows
-the mediator's variance score rising under treatment. (The b-path / indirect
-effect is attenuated at finite `Tᵢ` because the per-subject covariance is
-estimated from `Tᵢ` rows, so the bootstrap companion `capmediation_boot()` is the
-intended route for indirect-effect inference.)
+treatment → mediator-variance **a-path α̂ ≈ 0.8** (true 0.8) — the right panel
+shows the mediator's variance score rising under treatment. The bootstrap
+companion `capmediation_boot()` is the intended route for indirect-effect
+inference.
 
 ![CAP-mediation](man/figures/mediation.png)
 
@@ -189,11 +200,12 @@ selection, returning `nD` response loadings and de-biased inference for the
 covariate effects. This is the most expensive method (cross-validated lasso per
 direction-iteration plus post-selection inference) — use modest sizes when exploring.
 
-**Data:** `X` is an `n × q` covariate matrix (here `q = 60`); `Y_list` is a
-length-`n` list of `Tᵢ × p` matrices (`p = 5`).
+**Data:** `X` is an `n × q` covariate matrix (here `q = 200`); `Y_list` is a
+length-`n` list of `Tᵢ × p` matrices (`p = 5`). Two response directions are
+covariate-driven, each by a small sparse subset of the covariates.
 
 ```r
-d   <- hcap_example(n = 80, p = 5, q = 60, Ti = 60)   # ~1 min
+d   <- hcap_example()                                 # p = 5, q = 200 (~30-40 s)
 fit <- hcap(d$X, d$Y_list, stop.crt = "nD", nD = 2, B = 5)
 
 fit$gamma_est   # estimated loadings (p × nD)
@@ -220,7 +232,7 @@ coefficients.
 variance-covariate matrix; `W` is an `n × q₂` membership-covariate matrix.
 
 ```r
-d   <- cappcl_example()                 # 80 subjects, p = 6, 2 covariance regimes
+d   <- cappcl_example()                 # 100 subjects, p = 50, K = 2 clusters
 fit <- cappcl(d$Y, d$X, d$W, ncluster = 2, stop.crt = "nD", nD = 1)
 
 fit$gamma   # shared loading direction
@@ -228,8 +240,9 @@ fit$class   # estimated cluster membership
 fit$beta    # per-cluster variance-covariate coefficients
 ```
 
-The shared loading is recovered (**γ cosine ≈ 0.99**); the right panel shows the
-two covariance regimes capPCL separates (variance score by estimated cluster).
+The leading component's shared loading is recovered (**γ cosine ≈ 1** to the true
+direction D2); the right panel shows the two covariance regimes capPCL separates
+(variance score by estimated cluster).
 
 ![CAP-clustering](man/figures/clustering.png)
 

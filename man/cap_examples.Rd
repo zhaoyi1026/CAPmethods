@@ -11,19 +11,19 @@
 \alias{cappcl_example}
 \title{Example data for the CAP methods}
 \usage{
-hdcap_example(n = 80L, p = 6L, Ti = 60L, seed = 1L)
+hdcap_example(n = 100L, Ti = 100L, seed = 100L)
 
-lcap_example(n = 60L, p = 6L, nV = 6L, Ti = 40L, seed = 2024L)
+lcap_example(n = 100L, nV = 5L, Ti = 100L, seed = 4L)
 
-mcap_example(m = 12L, ni = 15L, p = 5L, Ti = 80L, kappa = 150, seed = 2024L)
+mcap_example(m = 20L, ni = 50L, Ti = 80L, kappa = 10, seed = 3L)
 
 coc_example(n = 150L, p = 10L, q = 5L, Tx = 150L, Ty = 150L, seed = 2024L)
 
-capmediation_example(n = 100L, p = 10L, Ti = 100L, seed = 100L)
+capmediation_example(n = 100L, p = 10L, Ti = 150L, seed = 2024L)
 
-hcap_example(n = 60L, p = 5L, q = 40L, Ti = 50L, seed = 2023L)
+hcap_example(n = 100L, q = 200L, Ti = 100L, seed = 2023L)
 
-cappcl_example(n = 80L, p = 6L, Ti = 100L, seed = 1L)
+cappcl_example(n = 100L, p = 50L, Ti = 100L, seed = 1L)
 }
 \arguments{
 \item{n}{number of subjects.}

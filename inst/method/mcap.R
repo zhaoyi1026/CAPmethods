@@ -1317,6 +1317,7 @@ lcap.cov.D1.fix.opt<-function(Y.cov,X1,Tmat,method=c("CAP"),H.type=c("CAvgCov","
       }
     }
     opt.idx<-which.min(obj)
+    if(length(opt.idx)==0){ nn<-which(!vapply(re.tmp,is.null,logical(1))); if(length(nn)==0){return(NULL)}; opt.idx<-nn[1] }
     re<-re.tmp[[opt.idx]]
   }
   
@@ -1762,6 +1763,7 @@ lcap.cov.D1.rnd.opt<-function(Y.cov,X2,Tmat,method=c("CAP"),H.type=c("CAvgCov","
       }
     }
     opt.idx<-which.min(obj)
+    if(length(opt.idx)==0){ nn<-which(!vapply(re.tmp,is.null,logical(1))); if(length(nn)==0){return(NULL)}; opt.idx<-nn[1] }
     re<-re.tmp[[opt.idx]]
   }
   
@@ -2301,6 +2303,7 @@ lcap.cov.D1.mix.opt<-function(Y.cov,X1,X2,Tmat,method=c("CAP"),H.type=c("CAvgCov
       }
     }
     opt.idx<-which.min(obj)
+    if(length(opt.idx)==0){ nn<-which(!vapply(re.tmp,is.null,logical(1))); if(length(nn)==0){return(NULL)}; opt.idx<-nn[1] }
     re<-re.tmp[[opt.idx]]
   }
   
@@ -2675,7 +2678,7 @@ DfD.cov<-function(Y.cov,Tmat,Gamma.rnd)
       for(j in 1:nvec[i])
       {
         dfd.mat[i,j,1]<-1
-        for(kk in 2:nD)
+        for(kk in seq_len(nD)[-1])
         {
           gamma.tmp<-Gamma.rnd[,1:kk,i]
           mat.tmp<-t(gamma.tmp)%*%Y.cov[[i]][,,j]%*%gamma.tmp
@@ -2946,7 +2949,13 @@ lcapReg<-function(Y,X1=NULL,X2=NULL,stop.crt=c("DfD","nD"),DfD.thred=2,nD=NULL,d
       }
       if(stop.crt[1]=="nD")
       {
-        for(kk in 2:nD)
+        if(score.return)
+        {
+          score<-array(NA,c(m,max(nvec),nD))
+          dimnames(score)[[1]]<-cluster.names
+          score[,,1]<-re1$score
+        }
+        for(kk in seq_len(nD)[-1])
         {
           if(score.return)
           {
@@ -3186,7 +3195,13 @@ lcapReg<-function(Y,X1=NULL,X2=NULL,stop.crt=c("DfD","nD"),DfD.thred=2,nD=NULL,d
       }
       if(stop.crt[1]=="nD")
       {
-        for(kk in 2:nD)
+        if(score.return)
+        {
+          score<-array(NA,c(m,max(nvec),nD))
+          dimnames(score)[[1]]<-cluster.names
+          score[,,1]<-re1$score
+        }
+        for(kk in seq_len(nD)[-1])
         {
           if(score.return)
           {
