@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "capcov"
+version = "0.1.0"
+description = "Covariate Assisted Principal (CAP) family of covariance-regression methods, in Python"
+readme = "README.md"
+requires-python = ">=3.7"
+license = {text = "MIT"}
+authors = [{name = "Yi Zhao"}]
+dependencies = [
+    "numpy>=1.16",
+    "scipy>=1.2",
+]
+
+[project.optional-dependencies]
+# methods that wrap fitted models / extra estimators
+full = [
+    "scikit-learn>=0.20",   # multinomial membership (CAP-clustering), lasso (CAP-HDcov)
+    "statsmodels>=0.9",     # mixed model (CAP-mediation)
+    "pandas>=0.24",
+]
+test = ["pytest>=4"]
+
+[tool.setuptools.packages.find]
+include = ["capcov*"]

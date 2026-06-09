@@ -51,6 +51,31 @@ shiny::runApp("app", launch.browser = TRUE)   # from the repository root
 
 See **[app/README.md](app/README.md)** for full install and launch instructions.
 
+## Python package
+
+A companion Python package, **`capcov`** (in [`Python/`](Python/)), ports the CAP
+family to Python (numpy/scipy). Implemented and verified against this R package:
+HDCAP/CAP, CAP-CoC, LCAP, CAP-mediation, CAP-clustering (MCAP and CAP-HDcov are
+planned). Install from the cloned repository:
+
+```bash
+git clone https://github.com/zhaoyi1026/CAPmethods.git
+pip install ./CAPmethods/Python            # core (numpy, scipy)
+pip install "./CAPmethods/Python[full]"    # + scikit-learn / statsmodels / pandas
+```
+
+Requires Python ≥ 3.7. Quick check:
+
+```python
+import capcov
+from capcov import examples
+d   = examples.hdcap_example()
+fit = capcov.cap_reg(d["Y"], d["X"], stop_crt="nD", nD=2, cov_shrinkage=False)
+```
+
+See **[Python/USAGE.md](Python/USAGE.md)** for how to use every method, and
+**[Python/README.md](Python/README.md)** for status and verification notes.
+
 ## Installation
 
 ```r
