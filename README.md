@@ -36,6 +36,21 @@ scores rising with the covariate):
 
 ![HDCAP example](man/figures/hdcap.png)
 
+## Shiny app
+
+A companion **CAP Methods Explorer** Shiny app (in [`app/`](app/)) provides a
+point-and-click interface to every method — run on built-in examples or your own
+uploaded data, tune parameters, and download result tables and plots. It uses
+this package as its engine. To run it locally, clone the repo and:
+
+```r
+install.packages(c("shiny", "bslib", "bsicons", "DT", "plotly",
+                   "shinycssloaders", "markdown", "mvtnorm"))
+shiny::runApp("app", launch.browser = TRUE)   # from the repository root
+```
+
+See **[app/README.md](app/README.md)** for full install and launch instructions.
+
 ## Installation
 
 ```r

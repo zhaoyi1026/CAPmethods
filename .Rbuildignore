@@ -5,3 +5,4 @@
 ^\.gitignore$
 ^LICENSE\.md$
 ^Examples\.md$
+^app$
