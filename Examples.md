@@ -16,8 +16,8 @@ fit <- <method>(...)           # run the method on it
 | HDCAP | `hdcap()` | `hdcap_example()` | covariate → covariance magnitude (two directions) |
 | LCAP | `lcap()` | `lcap_example()` | longitudinal, fixed + random effects |
 | MCAP | `mcap()` | `mcap_example()` | multilevel, cluster-varying loadings |
-| CAP-CoC | `coc()` | `coc_example()` | covariance-on-covariance regression (manuscript sim) |
-| CAP-mediation | `capmediation()` | `capmediation_example()` | covariance mediator (GMed sim) |
+| CAP-CoC | `coc()` | `coc_example()` | covariance-on-covariance regression |
+| CAP-mediation | `capmediation()` | `capmediation_example()` | covariance mediator |
 | HCAP | `hcap()` | `hcap_example()` | high-dimensional covariates (regularization + post-selection inference) |
 | CAP-clustering | `cappcl()` | `cappcl_example()` | clustering covariance patterns |
 
@@ -34,9 +34,9 @@ direction γ: `log(γ′ Σᵢ γ) = xᵢ′ β`. With `cov.shrinkage = FALSE` t
 classical CAP model; set `TRUE` (auto when `Tᵢ − 5 < p`) for the shrinkage
 estimator.
 
-**Data:** the manuscript's HD-shrinkage simulation (`210309/eg`): `p = 20`,
-`n = 100` subjects, `Tᵢ = 100`, one binary covariate (`group`), with **two**
-covariate-driven directions (basis cols 2 and 4, group effects `−1` and `+1`).
+**Data:** `p = 20`, `n = 100` subjects, `Tᵢ = 100`, one binary covariate
+(`group`), with **two** covariate-driven directions (basis cols 2 and 4, group
+effects `−1` and `+1`).
 `X` is `n × q`; `Y_list` is a length-`n` list of `Tᵢ × p` response matrices.
 
 ```r
@@ -60,9 +60,9 @@ whose `β̂(group) ≈ 0` correctly indicates no covariate effect.
 
 A time-invariant loading γ with a mixed model on the log-variance: fixed effects
 β plus random intercept (σ²) and random slopes (Ω). Visit `v` of subject `i`
-contributes a `Tᵢᵥ × p` matrix. The example is the manuscript's `p20_q3`
-simulation: `p = 20`, 100 subjects × ~5 visits, two within-subject covariates,
-with **two** covariate-driven directions (basis cols 2 and 4).
+contributes a `Tᵢᵥ × p` matrix. The example has `p = 20`, 100 subjects × ~5
+visits, two within-subject covariates, with **two** covariate-driven directions
+(basis cols 2 and 4).
 
 **Data:** `Y` is a nested list (subject → visit → `Tᵢᵥ × p`); `X` is a list of
 `nVᵢ × q` covariate matrices (one row per visit).
@@ -91,8 +91,7 @@ Units nested in clusters; each cluster `i` has its **own** loading `γᵢ` drawn
 around a population direction γ via a von Mises–Fisher distribution (concentration
 κ). The log-variance has cluster random intercept/slopes.
 
-**Data:** the manuscript's γ-varying simulation (`p5_q4_2-1`, case 1): `p = 5`,
-two covariate-driven directions, `m = 20` clusters. `Y` is a nested list
+**Data:** `p = 5`, two covariate-driven directions, `m = 20` clusters. `Y` is a nested list
 (cluster → unit → `Tᵢⱼ × p`); `X1` is a list of `nᵢ × q₁` **fixed**-effect
 covariate matrices, `X2` a list of `nᵢ × q₂` **random**-slope covariate matrices
 (no intercept columns). The number of directions is chosen by `nD` or `DfD`.
@@ -127,8 +126,8 @@ effects β. `coc()` runs the multi-direction selection (used here with `nD = 1`)
 **Data:** `X` (predictor) and `Y` (outcome) are length-`n` lists of `Tₓ × p` and
 `Tᵧ × q` matrices; `W` is an `n × r` covariate matrix.
 
-The built-in example is the **case-1 simulation of Zhao et al. (Biometrics 2025)**:
-`p = 10` predictor / `q = 5` outcome, with two covariance-on-covariance pairs —
+The built-in example has `p = 10` predictor / `q = 5` outcome, with two
+covariance-on-covariance pairs —
 predictor directions {1, 3} drive outcome directions {2, 4} with `α = (3, 2)` and
 `β = ((1,−1),(−1,1))`. The recovering fit uses **identity weights** `Hy = diag(q)`,
 `Hx = diag(p)` (the default average-covariance weight collapses to a background

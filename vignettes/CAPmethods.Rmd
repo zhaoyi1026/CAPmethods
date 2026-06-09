@@ -47,10 +47,9 @@ their figures are pre-computed.
 
 `log(γ′ Σᵢ γ) = xᵢ′ β`. With `cov.shrinkage = FALSE` this is classical CAP; set
 `TRUE` (auto when `Tᵢ − 5 < p`) for the shrinkage estimator. `X` is `n × q`;
-`Y_list` is a list of `Tᵢ × p` matrices. The example is the manuscript's
-HD-shrinkage simulation: `p = 20`, one binary covariate, **two** covariate-driven
-directions (basis cols 2 and 4, with group effects `−1` and `+1`); with shrinkage
-on, `nD = 2` recovers both.
+`Y_list` is a list of `Tᵢ × p` matrices. The example has `p = 20`, one binary
+covariate, **two** covariate-driven directions (basis cols 2 and 4, with group
+effects `−1` and `+1`); with shrinkage on, `nD = 2` recovers both.
 
 ```{r hdcap}
 d   <- hdcap_example()
@@ -70,8 +69,8 @@ for (k in 1:2)
 ## LCAP — longitudinal CAP (time-invariant projection)
 
 A time-invariant loading γ with a mixed model on the log-variance (fixed effects
-β, random intercept σ², random slopes Ω). The example is the manuscript's
-`p20_q3` simulation: `p = 20`, 100 subjects × ~5 visits, two within-subject
+β, random intercept σ², random slopes Ω). The example has `p = 20`, 100
+subjects × ~5 visits, two within-subject
 covariates, **two** covariate-driven directions (basis cols 2 and 4); with
 shrinkage on, `nD = 2` recovers both. `Y` is nested (subject → visit →
 `Tᵢᵥ × p`); `X` is a list of `nVᵢ × q` covariate matrices. Estimation with
@@ -99,8 +98,8 @@ the fixed effects match the truth:
 ## MCAP — multilevel CAP (cluster-varying loadings)
 
 Each cluster `i` has its own loading `γᵢ ~ vMF(γ, κ)` around a population direction.
-The example is the manuscript's γ-varying simulation (`p5_q4_2-1`, case 1): `p = 5`,
-**two** covariate-driven directions, `m = 20` clusters, fixed covariates `X1` and a
+The example has `p = 5`, **two** covariate-driven directions, `m = 20` clusters,
+fixed covariates `X1` and a
 random-slope covariate `X2`. `Y` is nested (cluster → unit → `Tᵢⱼ × p`); `X1`/`X2`
 are lists of `nᵢ × q` matrices. The number of directions is chosen by a fixed
 count (`nD`) or the `DfD` criterion. Estimation is slow (block-coordinate descent
@@ -127,9 +126,8 @@ cosine to the population direction (their spread reflects κ̂):
 ## CAP-CoC — covariance-on-covariance regression
 
 `log(γ′ Σᵧᵢ γ) = α · log(θ′ Σₓᵢ θ) + β′ Wᵢ`. `X` (predictor) and `Y` (outcome) are
-lists of `Tₓ × p` and `Tᵧ × q` matrices; `W` is `n × r`. The example is the
-case-1 simulation of Zhao et al. (Biometrics 2025): `p = 10` predictor, `q = 5`
-outcome, two CoC pairs (`α = (3, 2)`). The recovering fit uses identity weights
+lists of `Tₓ × p` and `Tᵧ × q` matrices; `W` is `n × r`. The example has
+`p = 10` predictor, `q = 5` outcome, two CoC pairs (`α = (3, 2)`). The recovering fit uses identity weights
 `Hy/Hx` (not the default average-covariance) and `burn.in = 200`; `nD = 1`
 recovers the leading pair.
 

@@ -1,5 +1,4 @@
-# Built-in example-data generators, one per method (mirroring the demo data in
-# the Shiny app). Each returns a list with the inputs the corresponding wrapper
+# Built-in example-data generators, one per method. Each returns a list with the inputs the corresponding wrapper
 # expects plus a `truth` element holding the data-generating parameters, so the
 # estimates can be checked. See the package vignette / Examples.md for full runs.
 
@@ -10,9 +9,9 @@
   e$vectors %*% diag(sqrt(pmax(e$values, 1e-8))) %*% t(e$vectors)
 }
 
-# Multivariate-normal sampler, bit-identical to mvtnorm::rmvnorm(method = "eigen")
-# in modern mvtnorm (which fills the standard-normal matrix BY ROW). Lets the MCAP
-# example reproduce the Shiny app's data exactly without an mvtnorm dependency.
+# Multivariate-normal sampler matching mvtnorm::rmvnorm(method = "eigen") in
+# modern mvtnorm (which fills the standard-normal matrix BY ROW); avoids an mvtnorm
+# dependency for the examples.
 .cap_rmvnorm <- function(n, mean, sigma) {
   ev <- eigen(sigma, symmetric = TRUE)
   R  <- ev$vectors %*% (t(ev$vectors) * sqrt(pmax(ev$values, 0)))
@@ -51,13 +50,13 @@ NULL
 #' @rdname cap_examples
 #' @export
 hdcap_example <- function(n = 100L, Ti = 100L, seed = 100L) {
-  # The manuscript HD-shrinkage simulation (210309/eg), identical to the Shiny app:
+  # HD-shrinkage CAP example:
   # p = 20, common eigenbasis Gamma, one binary covariate (group). TWO directions
   # satisfy the CAP model -- basis cols 2 and 4, with group effects -1 and +1 --
   # while every other direction has a random covariate-free log-variance. With
   # covariance shrinkage on, nD = 2 recovers BOTH covariate-driven directions.
   p <- 20L; beta.sd <- 0.5
-  # common orthonormal eigenbasis (runif(p) recycled into p x p, as in the paper)
+  # common orthonormal eigenbasis (runif(p) recycled into a p x p matrix)
   set.seed(seed)
   Gamma <- qr.Q(qr(matrix(stats::runif(p), p, p)))
   for (j in 1:p) if (Gamma[which.max(abs(Gamma[, j])), j] < 0) Gamma[, j] <- -Gamma[, j]
@@ -91,13 +90,12 @@ hdcap_example <- function(n = 100L, Ti = 100L, seed = 100L) {
 #' @rdname cap_examples
 #' @export
 lcap_example <- function(n = 100L, nV = 5L, Ti = 100L, seed = 4L) {
-  # The manuscript longitudinal simulation (p20_q3, case 1), identical to the Shiny
-  # app: p = 20, common time-invariant eigenbasis Gamma, ~nV visits/subject with
+  # Longitudinal CAP example: p = 20, common time-invariant eigenbasis Gamma, ~nV visits/subject with
   # ~Ti samples/visit, two within-subject covariates (x1, x2) and a subject random
   # intercept. TWO directions satisfy the CAP model -- basis cols 2 and 4 -- whose
   # log-variance depends on the covariates; nD = 2 with shrinkage recovers both.
   # (The estimator fits within-subject random slopes, so covariates are
-  # time-varying; the manuscript's binary time-invariant x1 is rendered as one.)
+  # time-varying; a binary time-invariant x1 is rendered as one.)
   p <- 20L; nV.m <- nV; nT.m <- Ti; seedl <- seed
   set.seed(100)
   Gamma <- qr.Q(qr(matrix(stats::runif(p), p, p)))
@@ -133,18 +131,17 @@ lcap_example <- function(n = 100L, nV = 5L, Ti = 100L, seed = 4L) {
 #' @rdname cap_examples
 #' @export
 mcap_example <- function(m = 20L, ni = 50L, Ti = 80L, kappa = 10, seed = 3L) {
-  # The manuscript's gamma-varying simulation (p5_q4_2-1, case 1), identical to the
-  # Shiny app demo: p = 5, q1 = 2 fixed covariates (X1), q2 = 1 random-slope
+  # Gamma-varying multilevel CAP example: p = 5, q1 = 2 fixed covariates (X1), q2 = 1 random-slope
   # covariate (X2), TWO covariate-driven directions (population basis cols 2, 4),
   # cluster directions gamma_i ~ vMF(gamma, kappa). ni / Ti are the Poisson means
   # of the per-cluster unit count and per-unit sample size; `seed` is the
-  # data-realisation seed (the other, structural seeds are fixed as in the paper).
+  # data-realisation seed (the other, structural seeds are fixed).
   p <- 5L; q1 <- 2L; q2 <- 1L
   rv.idx <- c(2L, 4L); nvec.lambda <- ni; Tmat.lambda <- Ti; seedl <- seed
   rvmf <- cap_internal("mcap", "rvmf")              # bundled vMF sampler
 
-  # population orthonormal basis (NB: runif(p) recycled into a p x p matrix, as in
-  # the manuscript -- not runif(p*p)) + sign convention
+  # population orthonormal basis (NB: runif(p) recycled into a p x p matrix, not
+  # runif(p*p)) + sign convention
   set.seed(100)
   Gamma <- qr.Q(qr(matrix(stats::runif(p), p, p)))
   for (j in 1:p) if (Gamma[which.max(abs(Gamma[, j])), j] < 0) Gamma[, j] <- -Gamma[, j]
@@ -217,7 +214,7 @@ mcap_example <- function(m = 20L, ni = 50L, Ti = 80L, kappa = 10, seed = 3L) {
 #' @rdname cap_examples
 #' @export
 coc_example <- function(n = 150L, p = 10L, q = 5L, Tx = 150L, Ty = 150L, seed = 2024L) {
-  # Case-1 simulation of Zhao et al. (Biometrics 2025): p-dim predictor X and
+  # Covariance-on-covariance example: p-dim predictor X and
   # q-dim outcome Y covariances with TWO covariance-on-covariance pairs --
   # predictor directions {1, 3} drive outcome directions {2, 4} with alpha = (3, 2)
   # and covariate effects beta; the remaining directions carry covariate-free noise.
@@ -258,7 +255,7 @@ coc_example <- function(n = 150L, p = 10L, q = 5L, Tx = 150L, Ty = 150L, seed = 
 #' @rdname cap_examples
 #' @export
 capmediation_example <- function(n = 100L, p = 10L, Ti = 150L, seed = 2024L) {
-  # Covariance-mediator example, identical to the Shiny app: a binary treatment
+  # Covariance-mediator example: a binary treatment
   # shifts the variance of a p-dim mediator M along one latent direction theta;
   # the outcome Y depends on that log-variance (mediator->outcome effect beta)
   # plus a direct treatment effect. Exposure->mediator-variance is the a-path
@@ -286,7 +283,7 @@ capmediation_example <- function(n = 100L, p = 10L, Ti = 150L, seed = 2024L) {
 #' @rdname cap_examples
 #' @export
 hcap_example <- function(n = 100L, q = 200L, Ti = 100L, seed = 2023L) {
-  # High-dimensional-covariate CAP example, identical to the Shiny app: p = 5
+  # High-dimensional-covariate CAP example: p = 5
   # responses, q covariates, TWO covariate-driven directions (mediator basis cols
   # 2 and 3), each driven by a small SPARSE subset of the q covariates; the rest
   # carry a covariate-free baseline. The sparse estimator + multi-split inference
@@ -319,7 +316,7 @@ hcap_example <- function(n = 100L, q = 200L, Ti = 100L, seed = 2023L) {
 #' @rdname cap_examples
 #' @export
 cappcl_example <- function(n = 100L, p = 50L, Ti = 100L, seed = 1L) {
-  # Covariance-clustering example, identical to the Shiny app: p = 50, K = 2
+  # Covariance-clustering example: p = 50, K = 2
   # clusters, with TWO covariate-driven components -- D2 (well separated) and D4
   # (clusters differ only in covariate signs). Within a cluster the projected
   # log-variance is a log-linear model in X; cluster membership depends on W.
