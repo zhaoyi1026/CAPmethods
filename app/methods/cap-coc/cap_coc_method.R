@@ -1,7 +1,7 @@
 # =============================================================================
 # CAP-CoC -- Covariance-on-Covariance regression  (plugin)
 # -----------------------------------------------------------------------------
-# Wraps the RcppArmadillo-accelerated implementation in ../CAP-CoC/V3/. Regresses
+# Method code from the CAPmethods package (>= 0.2.0: CAP-CoC V4). Regresses
 # the projected log-variance of an OUTCOME covariance (gamma' Sigma_i gamma) on
 # the projected log-variance of a PREDICTOR covariance (theta' Delta_i theta),
 # adjusting for covariates W. Both gamma and theta are learned from data.
@@ -282,7 +282,7 @@ register_method(list(
     list(id = "DfD.thred", label = "DfD threshold", type = "numeric",
          default = 2, min = 1, max = 100, step = 0.5, help = "Used when selecting by the DfD criterion."),
     list(id = "ninitial", label = "# random initializations", type = "integer",
-         default = 5, min = 1, max = 20, help = "Random restarts for the joint γ/θ search."),
+         default = 5, min = 1, max = 20, help = "Random restarts for the joint γ/θ search, each run from two initial values of β (0 and a random start)."),
     list(id = "sims", label = "Bootstrap replicates (α, β inference)", type = "integer",
          default = 200, min = 0, max = 2000, help = "Subject-level bootstrap; 0 = skip (point estimates only).")
   ),

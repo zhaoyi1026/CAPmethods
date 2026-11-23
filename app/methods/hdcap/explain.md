@@ -34,7 +34,10 @@ well-behaved even when $T_i < p$.
   criterion**, which keeps adding directions while the deviation-from-diagonality
   stays below a threshold.
 - **# random initializations** — more restarts make the non-convex optimization
-  more robust.
+  more robust. Each initial direction is run from two initial values of $\beta$
+  (0 and a random start); the candidates are compared by the function the fit
+  minimizes — with shrinkage, the shrunk scores with the fit's own shrinkage
+  weights — and the best is kept (HDCAP V9).
 - **Bootstrap replicates** — number of subject-level bootstrap resamples used for
   inference on $\beta$ (set to 0 to skip and show estimates only).
 

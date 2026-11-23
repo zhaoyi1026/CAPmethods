@@ -56,8 +56,9 @@ install.packages(c("shiny", "bslib", "bsicons", "DT", "plotly",
                    "shinycssloaders", "markdown", "mvtnorm"))
 ```
 
-**4. Launch the app.** Either run the launcher (which checks/install steps 2–3 for
-you and opens your browser):
+**4. Launch the app.** Either run the launcher (which checks/installs steps 2–3 for
+you — reinstalling `CAPmethods` when the installed version is older than the
+repository's; the app needs >= 0.2.0 — and opens your browser):
 
 ```bash
 Rscript app/run_local.R          # add a port number to override 7700

@@ -1,8 +1,9 @@
 # =============================================================================
 # CAP -- Covariate Assisted Principal regression  (plugin)
 # -----------------------------------------------------------------------------
-# Wraps the original implementation in ../CAP/V6/ (RcppArmadillo-accelerated)
-# and registers it with the website. This file is the template every other
+# Classical CAP = HDCAP with cov.shrinkage = FALSE, method code from the
+# CAPmethods package (>= 0.2.0: HDCAP V9; the CAP/V7 folder has the same
+# changes); registers it with the website. This file is the template every other
 # CAP-family method follows.
 # =============================================================================
 
@@ -110,6 +111,22 @@ cap_describe <- function(d) {
 }
 
 # ---- 5. Run -----------------------------------------------------------------
+# Asymptotic inference for beta of classical CAP, as cap_beta(method = "asmp") of
+# the CAP code (CAP/V6-V7): Var(beta-hat) = 2 (X'X)^{-1} / min_i T_i. The package
+# carries classical CAP as HDCAP with cov.shrinkage = FALSE, whose cap_beta() fits
+# beta and has no asymptotic method, so the formula is applied here.
+cap_beta_asmp <- function(Y, X, beta, conf.level = 0.95) {
+  Tvec <- vapply(Y, nrow, integer(1))
+  beta.se <- sqrt(diag(2 * solve(t(X) %*% X) / min(Tvec)))
+  beta.stat <- beta / beta.se
+  z <- qnorm((1 - conf.level) / 2, lower.tail = FALSE)
+  re <- data.frame(Estimate = beta, SE = beta.se, statistic = beta.stat,
+                   pvalue = (1 - pnorm(abs(beta.stat))) * 2,
+                   LB = beta - beta.se * z, UB = beta + beta.se * z)
+  rownames(re) <- colnames(X)
+  re
+}
+
 cap_run <- function(d, params) {
   Y <- d$Y; X <- d$X
   stop_crt <- params$stop.crt %||% "nD"
@@ -117,14 +134,13 @@ cap_run <- function(d, params) {
                 stop.crt = stop_crt,
                 nD = if (stop_crt == "nD") params$nD else NULL,
                 DfD.thred = params$DfD.thred %||% 2,
-                OC = isTRUE(params$OC),
                 ninitial = if (is.null(params$ninitial) || params$ninitial <= 0) NULL
                            else params$ninitial,
                 score.return = TRUE)
-  # asymptotic inference on every estimated direction's beta
+  # asymptotic inference on every estimated direction's beta (until 2026-11 this
+  # called the package's cap_beta() with CAP-only arguments, which failed silently)
   inference <- lapply(seq_len(ncol(fit$gamma)), function(j)
-    tryCatch(.cap_env$cap_beta(Y, X, gamma = fit$gamma[, j], beta = fit$beta[, j],
-                      method = "asmp"),
+    tryCatch(cap_beta_asmp(Y, X, beta = fit$beta[, j]),
              error = function(e) NULL))
   names(inference) <- colnames(fit$gamma)
 
@@ -339,11 +355,9 @@ register_method(list(
     list(id = "DfD.thred", label = "DfD threshold", type = "numeric",
          default = 2, min = 1, max = 50, step = 0.5,
          help = "Used when selecting by the DfD criterion (e.g. keep directions with DfD ≤ 2)."),
-    list(id = "OC", label = "Orthogonal constraint (OC)", type = "checkbox",
-         default = FALSE),
     list(id = "ninitial", label = "# random initializations", type = "integer",
          default = 5, min = 1, max = 30,
-         help = "More initializations = more robust optimization, slower.")
+         help = "More initializations = more robust optimization, slower. Each is run from two initial values of β (0 and a random start); the lowest negative log-likelihood wins.")
   ),
   example = cap_example,
   export_example = function(d) list(

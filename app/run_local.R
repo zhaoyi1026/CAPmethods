@@ -41,14 +41,23 @@ if (length(miss)) {
   install.packages(miss, repos = "https://cloud.r-project.org")
 }
 
-## ---- 2. ensure the CAPmethods package is installed -------------------------
-# The app gets every method from CAPmethods. If it is missing, install it from
-# the repository source (the app folder's parent has the package DESCRIPTION);
-# this builds the C++ kernels once. Falls back to GitHub if the source is absent.
-if (!requireNamespace("CAPmethods", quietly = TRUE)) {
-  if (file.exists(file.path(root, "DESCRIPTION"))) {
-    message("Installing CAPmethods from the repository source (", root,
-            ") — builds kernels once ...")
+## ---- 2. ensure the CAPmethods package is installed AND current -------------
+# The app gets every method from CAPmethods. Install it when it is missing, or
+# reinstall it when the installed version is older than the repository source
+# (the app folder's parent has the package DESCRIPTION; the plugins follow that
+# version); this builds the C++ kernels once. Falls back to GitHub if the source
+# is absent. The installed version is read without loading the package (a loaded
+# package cannot be replaced in the same session).
+src_ver <- if (file.exists(file.path(root, "DESCRIPTION")))
+  package_version(read.dcf(file.path(root, "DESCRIPTION"), "Version")[1, 1]) else NULL
+installed <- nzchar(system.file(package = "CAPmethods"))
+if (!installed || (!is.null(src_ver) && utils::packageVersion("CAPmethods") < src_ver)) {
+  if (installed)
+    message("CAPmethods ", as.character(utils::packageVersion("CAPmethods")),
+            " is older than the repository source ", as.character(src_ver), "; reinstalling.")
+  if (!is.null(src_ver)) {
+    message("Installing CAPmethods ", as.character(src_ver), " from the repository source (",
+            root, ") — builds kernels once ...")
     install.packages(root, repos = NULL, type = "source")
   } else {
     message("Installing CAPmethods from GitHub ...")

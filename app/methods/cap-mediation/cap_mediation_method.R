@@ -1,7 +1,7 @@
 # =============================================================================
 # CAP-mediation -- CAP-based mediation analysis with a covariance/graph mediator
 # -----------------------------------------------------------------------------
-# Wraps the RcppArmadillo-accelerated implementation in ../CAP-mediation/V4/.
+# Method code from the CAPmethods package (>= 0.2.0: CAP-mediation V5).
 # The MEDIATOR is a subject-level covariance matrix M_i (e.g. brain connectivity);
 # a projection theta summarizes it as a scalar log(theta' Sigma_i theta), and a
 # hierarchical model links exposure -> mediator -> outcome:

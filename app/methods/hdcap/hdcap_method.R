@@ -1,8 +1,8 @@
 # =============================================================================
 # HDCAP -- High-Dimensional Covariate Assisted Principal regression  (plugin)
 # -----------------------------------------------------------------------------
-# Wraps the RcppArmadillo-accelerated implementation in ../HDCAP/V7/ and
-# registers it with the website. Mirrors the CAP plugin structure.
+# Method code from the CAPmethods package (>= 0.2.0: HDCAP V9); registers it
+# with the website. Mirrors the CAP plugin structure.
 # =============================================================================
 
 # ---- 1. Load the method code from the CAPmethods package --------------------
@@ -113,7 +113,7 @@ hdcap_describe <- function(d) {
           paste(setdiff(colnames(d$X), "Intercept"), collapse = ", "))
 }
 
-# DfD avg.level vector (V7 returns DfD as a list even for one direction).
+# DfD avg.level vector (HDCAP returns DfD as a list even for one direction).
 hdcap_dfd_vec <- function(fit) {
   if (is.list(fit$DfD)) as.numeric(fit$DfD$avg.level) else rep(1, ncol(fit$gamma))
 }
@@ -354,7 +354,7 @@ register_method(list(
          help = "Used when selecting by the DfD criterion."),
     list(id = "ninitial", label = "# random initializations", type = "integer",
          default = 5, min = 1, max = 30,
-         help = "More initializations = more robust optimization, slower."),
+         help = "More initializations = more robust optimization, slower. Each is run from two initial values of β (0 and a random start); the best by the fit's objective is kept."),
     list(id = "sims", label = "Bootstrap replicates (β inference)", type = "integer",
          default = 100, min = 0, max = 2000,
          help = "Subject-level bootstrap for β inference; 0 = skip (estimates only).")

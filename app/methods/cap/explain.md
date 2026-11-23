@@ -36,12 +36,16 @@ $\gamma$; $\beta$ tells you which covariates drive that variance up or down.
   *deviation-from-diagonality* (DfD) stays below a threshold (e.g. DfD ≤ 2). The
   DfD measures how far the projected subject covariances are from being jointly
   diagonal; the search stops once an added direction would exceed the threshold.
-- **Variant** — `CAP` (the optimization-based estimator) or `CAP-C` (common
-  principal components flavor).
-- **Orthogonal constraint (`OC`)** — enforce strict orthogonality between
-  successive directions.
 - **# random initializations (`ninitial`)** — more initializations make the
-  non-convex optimization more robust at the cost of speed.
+  non-convex optimization more robust at the cost of speed. Each initial
+  direction is run from two initial values of $\beta$ (0 and a random start), and
+  the candidate with the lowest negative log-likelihood (at $\gamma^\top H\gamma = 1$)
+  is kept.
+
+The page uses the optimization estimator `CAP` (classical CAP = HDCAP without
+covariance shrinkage, from the CAPmethods package). The common-principal-component
+variant `CAP-C` and the orthogonal-constraint search are in the stand-alone CAP
+code, not in the package, so they are not offered here.
 
 ### Outputs
 

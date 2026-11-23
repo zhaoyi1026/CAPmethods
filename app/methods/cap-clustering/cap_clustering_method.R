@@ -1,7 +1,7 @@
 # =============================================================================
 # CAP-clustering (CAPclust) -- Parsimonious Clustering of Covariance Matrices
 # -----------------------------------------------------------------------------
-# Wraps the RcppArmadillo-accelerated implementation in ../CAP-clustering/V4/.
+# Method code from the CAPmethods package (>= 0.2.0: CAP-clustering V5).
 # Subjects whose data are covariance matrices are clustered, sharing a common CAP
 # projection gamma. Within cluster k the projected log-variance follows a
 # log-linear model, and cluster membership depends on covariates:

@@ -1,7 +1,7 @@
 # =============================================================================
 # CAP-HDcov (HCAP) -- CAP regression with High-Dimensional Covariates  (plugin)
 # -----------------------------------------------------------------------------
-# Wraps ../CAP-HDcov/V2/ (RcppArmadillo covariance kernel; HCAP_Code.R). Unlike
+# Method code from the CAPmethods package (>= 0.2.0: CAP-HDcov V3). Unlike
 # the other CAP methods, the modelling challenge here is a LARGE number of
 # COVARIATES q: a shared projection gamma summarizes each subject's response
 # covariance, and the projected log-variance is regressed on the high-dim

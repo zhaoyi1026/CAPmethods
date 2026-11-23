@@ -32,7 +32,9 @@ Multiple direction pairs can be extracted (each deflated from the previous).
   **leading** direction pair is the most reliably recovered; later pairs are
   harder (weaker signal after deflation).
 - **# random initializations** — restarts for the non-convex joint $\gamma/\theta$
-  search.
+  search. Each is run from two initial values of $\beta$ (0 and a random start),
+  and the candidates are compared by the least-squares objective with the
+  outcome covariances the fit iterates on (CAP-CoC V4).
 - **Bootstrap replicates** — subject-level bootstrap for inference on $\alpha$ and
   $\beta$ (0 to skip).
 

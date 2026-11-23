@@ -1,8 +1,8 @@
 # =============================================================================
 # MCAP -- Multilevel Covariate Assisted Principal regression (gamma-varying)
 # -----------------------------------------------------------------------------
-# Wraps the RcppArmadillo-accelerated implementation in ../LCAP_gamma-var/V4/ and
-# registers it with the website. MCAP is the multilevel sibling of LCAP: data are
+# Method code from the CAPmethods package (>= 0.2.0: MCAP V5); registers it with
+# the website. MCAP is the multilevel sibling of LCAP: data are
 # nested in CLUSTERS, each cluster has its own projection gamma_i drawn from a
 # von Mises-Fisher distribution around a population direction gamma (concentration
 # kappa), and log(gamma_i' Sigma_ij gamma_i) follows a mixed model in the

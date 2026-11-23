@@ -1,8 +1,8 @@
 # =============================================================================
 # LCAP -- Longitudinal Covariate Assisted Principal regression (gamma-invariant)
 # -----------------------------------------------------------------------------
-# Wraps the implementation in ../LCAP_gamma-invar/V5/ and registers it with the
-# website. Unlike CAP/HDCAP (cross-sectional), LCAP is LONGITUDINAL: each subject
+# Method code from the CAPmethods package (>= 0.2.0: LCAP V7); registers it with
+# the website. Unlike CAP/HDCAP (cross-sectional), LCAP is LONGITUDINAL: each subject
 # is observed over several VISITS, and the model uses a time-invariant projection
 # gamma with subject-level RANDOM EFFECTS (random intercept + random slopes) on
 # the log projected-variance. The gamma-varying multilevel sibling is "MCAP".
