@@ -1,4 +1,4 @@
-"""CAP-CoC -- Covariance-on-Covariance regression (Python port of CAP-CoC/V3).
+"""CAP-CoC -- Covariance-on-Covariance regression (Python port of R ``COCReg``, CAP-CoC V4).
 
 Model: for a pair of covariance-valued objects (outcome Y_i, predictor X_i) and
 covariates W_i,
@@ -9,8 +9,18 @@ where ``gamma`` (length q) projects the outcome covariance and ``theta``
 (length p) projects the predictor covariance. ``coc_reg`` finds the leading k
 projection pairs (gamma_k, theta_k) with per-direction (alpha_k, beta_k).
 
-Ported from ``CAP-CoC/V3/COCReg.R`` (RcppArmadillo-accelerated R reference);
-pure numpy/scipy here. The R version remains the reference.
+Ported from the R ``COCReg`` of CAP-CoC V4 (CAPmethods 0.2.0); pure numpy/scipy
+here. The R version remains the reference. As CAP-CoC V4 (capcov 0.2.0):
+
+* The objective that compares the initial values of a direction is the function
+  the fit minimizes: ``mean_i (log(gamma'Sy_i gamma) - alpha log(theta'Sx_i theta)
+  - W_i'beta)^2`` at ``gamma'Hy gamma = theta'Hx theta = 1`` with the outcome
+  covariances the fit iterates on -- with outcome shrinkage ``cov_sk_y`` at the
+  fitted variances ``exp(alpha log(theta'Sx_i theta) + W_i'beta)``, not the
+  per-subject ``cov_ls`` (its starting covariances).
+* Several initial values of beta, argument ``beta0`` (alpha starts at 0): a
+  vector of length r or an ``r x m`` array; ``None`` = two, ``0`` and
+  :func:`coc_beta0_v3` (R's ``set.seed(100); c(0, rnorm(r-1, 1, 1))``).
 
 Public API
 ----------
@@ -23,9 +33,9 @@ from __future__ import annotations
 
 import numpy as np
 
-from ._core import as_matrix_list, cov_ls, scores, accum, gamma_solve, diag_level
+from ._core import as_matrix_list, cov_ls, scores, accum, gamma_solve, diag_level, r_rnorm
 
-__all__ = ["coc_reg", "coc_coef", "coc_coef_asmp", "coc_coef_boot"]
+__all__ = ["coc_reg", "coc_coef", "coc_coef_asmp", "coc_coef_boot", "coc_beta0_v3"]
 
 
 # --------------------------------------------------------------------------- #
@@ -149,11 +159,47 @@ def _Sy_cube(Y, cov_shrinkage_y):
     return _covls_cube(Y) if cov_shrinkage_y else _sample_cov_cube(Y)
 
 
-def _obj_func(Sy, Sx, W, gamma, theta, alpha, beta):
-    sy = scores(Sy, gamma)
+def _obj_func(Sy, Sx, W, gamma, theta, alpha, beta, Y=None, cov_shrinkage_y=False):
+    """Least-squares objective (== R ``obj.func``).
+
+    ``cov_shrinkage_y=True`` replaces ``Sy`` by the covariances the fit iterates on
+    with outcome shrinkage, ``cov_sk_y(Y, gamma, kappa)`` at
+    ``kappa_i = exp(alpha log(theta'Sx_i theta) + W_i'beta)`` (V4); ``False``: ``Sy``
+    as given.
+    """
     sx = scores(Sx, theta)
+    if cov_shrinkage_y:
+        kappa = np.exp(alpha * np.log(sx) + W @ beta)
+        Sy = _cov_sk_y(Y, gamma, kappa)
+    sy = scores(Sy, gamma)
     lv = (np.log(sy) - alpha * np.log(sx) - W @ beta) ** 2
     return np.nanmean(lv)
+
+
+def _obj_scores(sy, sx, W, alpha, beta):
+    """The objective from a fit's own scores (its covariances)."""
+    return np.nanmean((np.log(sy) - alpha * np.log(sx) - W @ beta) ** 2)
+
+
+def coc_beta0_v3(r):
+    """The V2-V3 initial value of beta: R's ``set.seed(100); c(0, rnorm(r-1, 1, 1))``.
+
+    The same numbers as in R; numpy's random numbers are not changed.
+    """
+    return np.r_[0.0, r_rnorm(int(r) - 1, 100, 1.0, 1.0)]
+
+
+def _beta0_mat(r, beta0=None):
+    """Initial values of beta as an ``r x m`` array (``None``: 0 and coc_beta0_v3)."""
+    if beta0 is None:
+        return np.column_stack([np.zeros(r), coc_beta0_v3(r)])
+    B0 = np.array(beta0, dtype=float)
+    if B0.ndim == 1:
+        B0 = B0[:, None]
+    if B0.ndim != 2 or B0.shape[0] != r or B0.shape[1] < 1 or not np.all(np.isfinite(B0)):
+        raise ValueError(f"beta0 must be a finite vector of length ncol(W) = {r}, "
+                         f"or an array with {r} rows (one initial value per column).")
+    return B0
 
 
 def _sign_norm(v):
@@ -167,11 +213,39 @@ def _sign_norm(v):
 # given gamma, theta: estimate alpha, beta                                     #
 # --------------------------------------------------------------------------- #
 def coc_coef(Y, X, W, gamma, theta, cov_shrinkage_y=True, cov_shrinkage_x=True,
-             max_itr=1000, tol=1e-4):
-    """Estimate (alpha, beta) given fixed (gamma, theta) (== R ``COCReg.coef``)."""
+             max_itr=1000, tol=1e-4, beta0=None):
+    """Estimate (alpha, beta) given fixed (gamma, theta) (== R ``COCReg.coef``).
+
+    ``beta0``: initial value(s) of beta (alpha starts at 0); with several, one fit
+    per initial value and the converged estimate with the lowest objective (a
+    non-converged one only when none converged).
+    """
     Y = as_matrix_list(Y)
     X = as_matrix_list(X)
     W = _as_W(W)
+    B0 = _beta0_mat(W.shape[1], beta0)
+    if B0.shape[1] > 1:
+        best = None
+        for j in range(B0.shape[1]):
+            try:
+                with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+                    rj = coc_coef(Y, X, W, gamma, theta, cov_shrinkage_y=cov_shrinkage_y,
+                                  cov_shrinkage_x=cov_shrinkage_x, max_itr=max_itr, tol=tol,
+                                  beta0=B0[:, j])
+                    if not np.all(np.isfinite(np.r_[rj["alpha"], rj["beta"]])):
+                        continue
+                    ob = _obj_scores(rj["score_y"], rj["score_x"], W, rj["alpha"], rj["beta"])
+            except Exception:              # as R's try(): this initial value is skipped
+                continue
+            if not np.isfinite(ob):
+                ob = np.inf
+            if (best is None or (rj["convergence"] and not best[0]["convergence"])
+                    or (rj["convergence"] == best[0]["convergence"] and ob < best[1])):
+                best = (rj, ob)
+        if best is None:
+            raise RuntimeError("COCReg.coef: alpha and beta could not be estimated "
+                               "from any initial value of beta.")
+        return best[0]
     n = len(Y)
     p = X[0].shape[1]
     q = Y[0].shape[1]
@@ -192,7 +266,7 @@ def coc_coef(Y, X, W, gamma, theta, cov_shrinkage_y=True, cov_shrinkage_x=True,
     score_y = scores(Sy, gamma)
 
     alpha0 = 0.0
-    beta0 = np.zeros(r)          # init irrelevant to the converged estimate
+    beta0 = np.array(B0[:, 0])   # the given initial value (alpha starts at 0)
     WtW_inv = np.linalg.pinv(W.T @ W / n)
 
     s = 0
@@ -224,7 +298,8 @@ def coc_coef(Y, X, W, gamma, theta, cov_shrinkage_y=True, cov_shrinkage_x=True,
 # --------------------------------------------------------------------------- #
 def _coc_d1_base(Y, X, W, gamma=None, theta=None, Hy=None, Hx=None,
                  cov_shrinkage_y=True, cov_shrinkage_x=True,
-                 max_itr=1000, tol=1e-4, gamma0=None, theta0=None, burn_in=1000):
+                 max_itr=1000, tol=1e-4, gamma0=None, theta0=None, burn_in=1000,
+                 beta0=None):
     Y = as_matrix_list(Y)
     X = as_matrix_list(X)
     W = _as_W(W)
@@ -248,8 +323,29 @@ def _coc_d1_base(Y, X, W, gamma=None, theta=None, Hy=None, Hx=None,
     if Hy is None:
         Hy = accum(Sy, nyvec / nyvec.sum())
 
+    # several initial values of beta: one run per initial value, the direction with
+    # the lowest objective, compared as in _coc_d1_opt (_coc_dir_obj)
+    B0 = _beta0_mat(r, beta0)
+    if B0.shape[1] > 1:
+        best = None
+        for j in range(B0.shape[1]):
+            try:
+                rj = _coc_d1_base(Y, X, W, gamma=gamma, theta=theta, Hy=Hy, Hx=Hx,
+                                  cov_shrinkage_y=cov_shrinkage_y, cov_shrinkage_x=cov_shrinkage_x,
+                                  max_itr=max_itr, tol=tol, gamma0=gamma0, theta0=theta0,
+                                  burn_in=burn_in, beta0=B0[:, j])
+                ob = _coc_dir_obj(Y, X, W, rj["gamma"], rj["theta"], Hy, Hx, Sy, Sx,
+                                  cov_shrinkage_y, cov_shrinkage_x, B0, max_itr, tol)
+            except Exception:              # as R's try(): this initial value is skipped
+                continue
+            if np.isfinite(ob) and (best is None or ob < best[1]):
+                best = (rj, ob)
+        if best is None:
+            raise RuntimeError("COCReg.D1.base: no initial value of beta gave an estimate.")
+        return best[0]
+
     alpha0 = 0.0
-    beta0 = np.zeros(r)
+    beta0 = np.array(B0[:, 0])   # one initial value of beta (alpha starts at 0)
     if gamma0 is None and gamma is None:
         gamma0 = np.full(q, 1.0 / np.sqrt(q))
     elif gamma0 is None:
@@ -318,7 +414,7 @@ def _coc_d1_base(Y, X, W, gamma=None, theta=None, Hy=None, Hx=None,
     gamma_est = _sign_norm(gamma0)
     theta_est = _sign_norm(theta0)
     otmp = coc_coef(Y, X, W, gamma_est, theta_est, cov_shrinkage_y=cov_shrinkage_y,
-                    cov_shrinkage_x=cov_shrinkage_x, max_itr=max_itr, tol=tol)
+                    cov_shrinkage_x=cov_shrinkage_x, max_itr=max_itr, tol=tol, beta0=B0)
     return {
         "gamma": gamma_est, "theta": theta_est, "alpha": otmp["alpha"],
         "beta": otmp["beta"], "convergence": s < max_itr,
@@ -328,17 +424,34 @@ def _coc_d1_base(Y, X, W, gamma=None, theta=None, Hy=None, Hx=None,
 
 def _coc_d1(Y, X, W, gamma=None, theta=None, Hy=None, Hx=None,
             cov_shrinkage_y=True, cov_shrinkage_x=True, max_itr=1000, tol=1e-4,
-            gamma0=None, theta0=None, burn_in=1000):
+            gamma0=None, theta0=None, burn_in=1000, beta0=None):
+    """One direction (== R ``COCReg.D1``); ``beta0`` goes to both base runs."""
     if gamma is None and theta is None:
         tmp = _coc_d1_base(Y, X, W, gamma=None, theta=None, Hy=Hy, Hx=Hx,
                            cov_shrinkage_y=cov_shrinkage_y, cov_shrinkage_x=cov_shrinkage_x,
-                           max_itr=max_itr, tol=tol, gamma0=gamma0, theta0=theta0, burn_in=burn_in)
+                           max_itr=max_itr, tol=tol, gamma0=gamma0, theta0=theta0, burn_in=burn_in,
+                           beta0=beta0)
         return _coc_d1_base(Y, X, W, gamma=tmp["gamma"], theta=None, Hy=Hy, Hx=Hx,
                             cov_shrinkage_y=cov_shrinkage_y, cov_shrinkage_x=cov_shrinkage_x,
-                            max_itr=max_itr, tol=tol, gamma0=gamma0, theta0=theta0, burn_in=burn_in)
+                            max_itr=max_itr, tol=tol, gamma0=gamma0, theta0=theta0, burn_in=burn_in,
+                            beta0=beta0)
     return _coc_d1_base(Y, X, W, gamma=gamma, theta=theta, Hy=Hy, Hx=Hx,
                         cov_shrinkage_y=cov_shrinkage_y, cov_shrinkage_x=cov_shrinkage_x,
-                        max_itr=max_itr, tol=tol, gamma0=gamma0, theta0=theta0, burn_in=burn_in)
+                        max_itr=max_itr, tol=tol, gamma0=gamma0, theta0=theta0, burn_in=burn_in,
+                        beta0=beta0)
+
+
+def _coc_dir_obj(Y, X, W, gamma, theta, Hy, Hx, Sy, Sx, cov_shrinkage_y, cov_shrinkage_x,
+                 B0, max_itr, tol):
+    """Objective of a direction, as the initial values are compared: gamma, theta
+    scaled to gamma'Hy gamma = theta'Hx theta = 1, (alpha, beta) from every initial
+    value of beta, the covariances of the fit."""
+    g_un = gamma / np.sqrt(gamma @ Hy @ gamma)
+    t_un = theta / np.sqrt(theta @ Hx @ theta)
+    coef = coc_coef(Y, X, W, g_un, t_un, cov_shrinkage_y=cov_shrinkage_y,
+                    cov_shrinkage_x=cov_shrinkage_x, max_itr=max_itr, tol=tol, beta0=B0)
+    return _obj_func(Sy, Sx, W, g_un, t_un, coef["alpha"], coef["beta"], Y=Y,
+                     cov_shrinkage_y=cov_shrinkage_y)
 
 
 def _eig_desc(S):
@@ -349,7 +462,7 @@ def _eig_desc(S):
 
 def _coc_d1_opt(Y, X, W, gamma=None, theta=None, Hy=None, Hx=None,
                 cov_shrinkage_y=True, cov_shrinkage_x=True, max_itr=1000, tol=1e-4,
-                burn_in=1000, gamma0_mat=None, theta0_mat=None, ninitial=None):
+                burn_in=1000, gamma0_mat=None, theta0_mat=None, ninitial=None, beta0=None):
     Y = as_matrix_list(Y)
     X = as_matrix_list(X)
     W = _as_W(W)
@@ -374,15 +487,19 @@ def _coc_d1_opt(Y, X, W, gamma=None, theta=None, Hy=None, Hx=None,
     if Hy is None:
         Hy = accum(Sy, nyvec / nyvec.sum())
 
-    if ninitial is None:
-        if gamma0_mat is not None and theta0_mat is not None:
-            ninitial = min(gamma0_mat.shape[1], theta0_mat.shape[1], 10)
-        elif gamma0_mat is not None:
-            ninitial = min(gamma0_mat.shape[1], 10)
-        elif theta0_mat is not None:
-            ninitial = min(theta0_mat.shape[1], 10)
-        else:
-            ninitial = min(p, q, 10)
+    if gamma0_mat is not None:
+        gamma0_mat = np.asarray(gamma0_mat, dtype=float).reshape(q, -1)
+    if theta0_mat is not None:
+        theta0_mat = np.asarray(theta0_mat, dtype=float).reshape(p, -1)
+    cap = 10 if ninitial is None else int(ninitial)     # as R: capped by given columns
+    if gamma0_mat is not None and theta0_mat is not None:
+        ninitial = min(gamma0_mat.shape[1], theta0_mat.shape[1], cap)
+    elif gamma0_mat is not None:
+        ninitial = min(gamma0_mat.shape[1], cap)
+    elif theta0_mat is not None:
+        ninitial = min(theta0_mat.shape[1], cap)
+    elif ninitial is None:
+        ninitial = min(p, q, 10)
 
     if gamma is None:
         if gamma0_mat is None:
@@ -397,41 +514,54 @@ def _coc_d1_opt(Y, X, W, gamma=None, theta=None, Hy=None, Hx=None,
         t = np.asarray(theta, dtype=float).ravel()
         theta0_mat = np.tile(t[:, None], (1, ninitial))
 
-    best = None
-    best_obj = np.inf
+    # every initial value of (gamma, theta) from every initial value of beta
+    B0 = _beta0_mat(W.shape[1], beta0)
+    cands, objs = [], []
     for kk in range(ninitial):
-        try:
-            rk = _coc_d1(Y, X, W, gamma=gamma, theta=theta, Hy=Hy, Hx=Hx,
-                         cov_shrinkage_y=cov_shrinkage_y, cov_shrinkage_x=cov_shrinkage_x,
-                         max_itr=max_itr, tol=tol, gamma0=gamma0_mat[:, kk],
-                         theta0=theta0_mat[:, kk], burn_in=burn_in)
-        except Exception:
-            continue
-        g = rk["gamma"]
-        t = rk["theta"]
-        g_un = g / np.sqrt(g @ Hy @ g)
-        t_un = t / np.sqrt(t @ Hx @ t)
-        try:
-            coef = coc_coef(Y, X, W, g_un, t_un, cov_shrinkage_y=cov_shrinkage_y,
-                            cov_shrinkage_x=cov_shrinkage_x, max_itr=max_itr, tol=tol)
-            obj = _obj_func(Sy, Sx, W, g_un, t_un, coef["alpha"], coef["beta"])
-        except Exception:
-            obj = np.inf
-        if obj < best_obj:
-            best_obj = obj
-            best = rk
-    return best
+        for jj in range(B0.shape[1]):
+            try:
+                rk = _coc_d1(Y, X, W, gamma=gamma, theta=theta, Hy=Hy, Hx=Hx,
+                             cov_shrinkage_y=cov_shrinkage_y, cov_shrinkage_x=cov_shrinkage_x,
+                             max_itr=max_itr, tol=tol, gamma0=gamma0_mat[:, kk],
+                             theta0=theta0_mat[:, kk], burn_in=burn_in, beta0=B0[:, jj])
+                # objective with the covariances of the fit (V4)
+                obj = _coc_dir_obj(Y, X, W, rk["gamma"], rk["theta"], Hy, Hx, Sy, Sx,
+                                   cov_shrinkage_y, cov_shrinkage_x, B0, max_itr, tol)
+            except Exception:              # as R's try(): candidate not used
+                continue
+            if not np.isnan(obj):          # R: order(obj, na.last = NA) drops NA only
+                cands.append(rk)
+                objs.append(obj)
+    if not cands:
+        raise RuntimeError("COCReg.D1.opt: no initial value of gamma and theta gave an estimate.")
+    # the candidates in increasing order of the objective, the first one whose final
+    # (alpha, beta) -- from every initial value of beta -- can be estimated
+    for idx in np.argsort(np.asarray(objs), kind="stable"):
+        rk = dict(cands[idx])
+        if B0.shape[1] > 1:
+            try:
+                fin = coc_coef(Y, X, W, rk["gamma"], rk["theta"], cov_shrinkage_y=cov_shrinkage_y,
+                               cov_shrinkage_x=cov_shrinkage_x, max_itr=max_itr, tol=tol, beta0=B0)
+            except Exception:
+                continue
+            for key in ("alpha", "beta", "score_y", "score_x"):
+                rk[key] = fin[key]
+        return rk
+    raise RuntimeError("COCReg.D1.opt: alpha and beta could not be estimated for any "
+                       "initial value of gamma and theta.")
 
 
 def _coc_dk(Y, X, W, Gamma0=None, Theta0=None, remove_y=True, remove_x=True,
             Hy=None, Hx=None, cov_shrinkage_y=True, cov_shrinkage_x=True,
-            max_itr=1000, tol=1e-4, burn_in=1000, ninitial=None):
+            max_itr=1000, tol=1e-4, burn_in=1000, ninitial=None, beta0=None,
+            gamma0_mat=None, theta0_mat=None):
     Y = as_matrix_list(Y)
     X = as_matrix_list(X)
     if Gamma0 is None and Theta0 is None:
         return _coc_d1_opt(Y, X, W, Hy=Hy, Hx=Hx, cov_shrinkage_y=cov_shrinkage_y,
                            cov_shrinkage_x=cov_shrinkage_x, max_itr=max_itr, tol=tol,
-                           burn_in=burn_in, ninitial=ninitial)
+                           burn_in=burn_in, ninitial=ninitial, beta0=beta0,
+                           gamma0_mat=gamma0_mat, theta0_mat=theta0_mat)
     if Gamma0 is not None and remove_y:
         Py = Gamma0 @ Gamma0.T
         Ytmp = [Yi - Yi @ Py for Yi in Y]
@@ -444,7 +574,8 @@ def _coc_dk(Y, X, W, Gamma0=None, Theta0=None, remove_y=True, remove_x=True,
         Xtmp = X
     re = _coc_d1_opt(Ytmp, Xtmp, W, Hy=Hy, Hx=Hx, cov_shrinkage_y=cov_shrinkage_y,
                      cov_shrinkage_x=cov_shrinkage_x, max_itr=max_itr, tol=tol,
-                     burn_in=burn_in, ninitial=ninitial)
+                     burn_in=burn_in, ninitial=ninitial, beta0=beta0,
+                     gamma0_mat=gamma0_mat, theta0_mat=theta0_mat)
     if re is not None and Gamma0 is not None:
         re["orthogonal_gamma"] = re["gamma"] @ Gamma0
         re["orthogonal_theta"] = re["theta"] @ Theta0
@@ -457,7 +588,8 @@ def _coc_dk(Y, X, W, Gamma0=None, Theta0=None, remove_y=True, remove_x=True,
 def coc_reg(Y, X, W, stop_crt="nD", nD=None, DfD_y_thred=2.0, DfD_thred=2.0,
             remove_y=True, remove_x=True, Hy=None, Hx=None,
             cov_shrinkage_y=True, cov_shrinkage_x=True, max_itr=1000, tol=1e-4,
-            burn_in=1000, ninitial=None, verbose=False):
+            burn_in=1000, ninitial=None, verbose=False, beta0=None,
+            gamma0_mat=None, theta0_mat=None):
     """Covariance-on-covariance regression (== R ``COCReg``).
 
     Parameters
@@ -468,6 +600,13 @@ def coc_reg(Y, X, W, stop_crt="nD", nD=None, DfD_y_thred=2.0, DfD_thred=2.0,
         Covariates (include an intercept column).
     stop_crt : {"nD", "DfD.y", "DfD"}
         Number of directions, or a deviation-from-diagonality threshold.
+    beta0 : initial value(s) of beta (alpha starts at 0): a vector of length r or an
+        ``r x m`` array; ``None`` = two, ``0`` and :func:`coc_beta0_v3`.
+    gamma0_mat, theta0_mat : ``q x k`` / ``p x k`` initial values of gamma / theta
+        (default: the leading eigenvectors of the average covariances, as R).
+
+    The first direction raises ``RuntimeError`` when it cannot be estimated; a later
+    direction that cannot be estimated ends the search.
 
     Returns a dict with ``gamma`` (q x k), ``theta`` (p x k), ``alpha`` (k,),
     ``beta`` (r x k), ``score_y``/``score_x`` (n x k), and DfD diagnostics.
@@ -491,7 +630,19 @@ def coc_reg(Y, X, W, stop_crt="nD", nD=None, DfD_y_thred=2.0, DfD_thred=2.0,
 
     re1 = _coc_d1_opt(Y, X, W, Hy=Hy, Hx=Hx, cov_shrinkage_y=cov_shrinkage_y,
                       cov_shrinkage_x=cov_shrinkage_x, max_itr=max_itr, tol=tol,
-                      burn_in=burn_in, ninitial=ninitial)
+                      burn_in=burn_in, ninitial=ninitial, beta0=beta0,
+                      gamma0_mat=gamma0_mat, theta0_mat=theta0_mat)
+
+    def _next():
+        # the next direction; None (stop) when it cannot be estimated
+        try:
+            return _coc_dk(Y, X, W, Gamma0=np.column_stack(Gamma), Theta0=np.column_stack(Theta),
+                           remove_y=remove_y, remove_x=remove_x, Hy=Hy, Hx=Hx,
+                           cov_shrinkage_y=cov_shrinkage_y, cov_shrinkage_x=cov_shrinkage_x,
+                           max_itr=max_itr, tol=tol, burn_in=burn_in, ninitial=ninitial,
+                           beta0=beta0, gamma0_mat=gamma0_mat, theta0_mat=theta0_mat)
+        except Exception:
+            return None
     Gamma = [re1["gamma"]]
     Theta = [re1["theta"]]
     alpha = [re1["alpha"]]
@@ -513,20 +664,14 @@ def coc_reg(Y, X, W, stop_crt="nD", nD=None, DfD_y_thred=2.0, DfD_thred=2.0,
 
     if stop_crt == "nD":
         for _ in range(2, nD + 1):
-            re_tmp = _coc_dk(Y, X, W, Gamma0=np.column_stack(Gamma), Theta0=np.column_stack(Theta),
-                             remove_y=remove_y, remove_x=remove_x, Hy=Hy, Hx=Hx,
-                             cov_shrinkage_y=cov_shrinkage_y, cov_shrinkage_x=cov_shrinkage_x,
-                             max_itr=max_itr, tol=tol, burn_in=burn_in, ninitial=ninitial)
+            re_tmp = _next()
             if re_tmp is None:
                 break
             _add(re_tmp)
     elif stop_crt == "DfD.y":
         DfD_tmp = 1.0
         while DfD_tmp < DfD_y_thred:
-            re_tmp = _coc_dk(Y, X, W, Gamma0=np.column_stack(Gamma), Theta0=np.column_stack(Theta),
-                             remove_y=remove_y, remove_x=remove_x, Hy=Hy, Hx=Hx,
-                             cov_shrinkage_y=cov_shrinkage_y, cov_shrinkage_x=cov_shrinkage_x,
-                             max_itr=max_itr, tol=tol, burn_in=burn_in, ninitial=ninitial)
+            re_tmp = _next()
             if re_tmp is None:
                 break
             k = len(Gamma)   # 0-based index of the candidate new direction
@@ -539,10 +684,7 @@ def coc_reg(Y, X, W, stop_crt="nD", nD=None, DfD_y_thred=2.0, DfD_thred=2.0,
     elif stop_crt == "DfD":
         DfD_tmp = 1.0
         while DfD_tmp < DfD_thred:
-            re_tmp = _coc_dk(Y, X, W, Gamma0=np.column_stack(Gamma), Theta0=np.column_stack(Theta),
-                             remove_y=remove_y, remove_x=remove_x, Hy=Hy, Hx=Hx,
-                             cov_shrinkage_y=cov_shrinkage_y, cov_shrinkage_x=cov_shrinkage_x,
-                             max_itr=max_itr, tol=tol, burn_in=burn_in, ninitial=ninitial)
+            re_tmp = _next()
             if re_tmp is None:
                 break
             k = len(Gamma)
@@ -577,7 +719,7 @@ def coc_reg(Y, X, W, stop_crt="nD", nD=None, DfD_y_thred=2.0, DfD_thred=2.0,
 # inference                                                                    #
 # --------------------------------------------------------------------------- #
 def coc_coef_asmp(Y, X, W, gamma, theta, conf_level=0.95, cov_shrinkage_y=True,
-                  cov_shrinkage_x=True, max_itr=1000, tol=1e-4):
+                  cov_shrinkage_x=True, max_itr=1000, tol=1e-4, beta0=None):
     """Asymptotic inference for (alpha, beta) (== R ``COCReg.coef.asmp``)."""
     from scipy.stats import norm
     Y = as_matrix_list(Y)
@@ -599,7 +741,7 @@ def coc_coef_asmp(Y, X, W, gamma, theta, conf_level=0.95, cov_shrinkage_y=True,
     score_x = scores(Sx, theta)
 
     coef = coc_coef(Y, X, W, gamma, theta, cov_shrinkage_y=cov_shrinkage_y,
-                    cov_shrinkage_x=cov_shrinkage_x, max_itr=max_itr, tol=tol)
+                    cov_shrinkage_x=cov_shrinkage_x, max_itr=max_itr, tol=tol, beta0=beta0)
 
     lsx = np.log(score_x)
     Gx = np.nanmean(lsx ** 2)
@@ -631,7 +773,7 @@ def coc_coef_asmp(Y, X, W, gamma, theta, conf_level=0.95, cov_shrinkage_y=True,
 
 def coc_coef_boot(Y, X, W, gamma, theta, cov_shrinkage_y=True, cov_shrinkage_x=True,
                   sims=1000, boot_ci_type="se", conf_level=0.95, max_itr=1000,
-                  tol=1e-4, seed=100):
+                  tol=1e-4, seed=100, beta0=None):
     """Bootstrap inference for (alpha, beta) (== R ``COCReg.coef.boot``).
 
     Note: R seeds each resample with ``set.seed(100+b)``; this uses a numpy
@@ -647,6 +789,7 @@ def coc_coef_boot(Y, X, W, gamma, theta, cov_shrinkage_y=True, cov_shrinkage_x=T
     gamma = np.asarray(gamma, dtype=float).ravel()
     theta = np.asarray(theta, dtype=float).ravel()
 
+    B0 = _beta0_mat(r, beta0)             # initial value(s) of beta of every draw
     alpha_boot = np.full(sims, np.nan)
     beta_boot = np.full((r, sims), np.nan)
     for b in range(sims):
@@ -657,7 +800,7 @@ def coc_coef_boot(Y, X, W, gamma, theta, cov_shrinkage_y=True, cov_shrinkage_x=T
         Wt = W[idx, :]
         try:
             rt = coc_coef(Yt, Xt, Wt, gamma, theta, cov_shrinkage_y=cov_shrinkage_y,
-                          cov_shrinkage_x=cov_shrinkage_x, max_itr=max_itr, tol=tol)
+                          cov_shrinkage_x=cov_shrinkage_x, max_itr=max_itr, tol=tol, beta0=B0)
             alpha_boot[b] = rt["alpha"]
             beta_boot[:, b] = rt["beta"]
         except Exception:

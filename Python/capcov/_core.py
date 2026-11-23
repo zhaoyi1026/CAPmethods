@@ -11,8 +11,52 @@ from scipy.linalg import eigh
 
 __all__ = [
     "as_matrix_list", "cov_ls", "sigma_cube", "scores", "accum",
-    "gamma_solve", "diag_level",
+    "gamma_solve", "diag_level", "r_runif", "r_rnorm",
 ]
+
+
+# ------------------------------------------------- R's random numbers -----------
+# The R methods draw their default initial value of beta as
+# ``set.seed(100); c(0, rnorm(q - 1, 1, 1))``.  To use the same start, these
+# reproduce R's default generators (Mersenne-Twister with R's set.seed()
+# scrambling, and "Inversion" normals).  They use their own generator state, so
+# numpy's random numbers are not changed.
+def _r_mt_words(seed, nwords):
+    """32-bit Mersenne-Twister outputs after R's ``set.seed(seed)``."""
+    x = int(seed) & 0xFFFFFFFF
+    for _ in range(50):                       # R's initial scrambling
+        x = (69069 * x + 1) & 0xFFFFFFFF
+    key = np.empty(625, dtype=np.uint32)      # i_seed[0] (mti), then mt[0..623]
+    for j in range(625):
+        x = (69069 * x + 1) & 0xFFFFFFFF
+        key[j] = x
+    rs = np.random.RandomState()
+    rs.set_state(("MT19937", key[1:], 624, 0, 0.0))   # mti = 624 (FixupSeeds)
+    return rs.randint(0, 2 ** 32, size=nwords, dtype=np.uint64)
+
+
+def r_runif(n, seed):
+    """R's ``set.seed(seed); runif(n)`` (identical values)."""
+    u = _r_mt_words(seed, int(n)).astype(float) * 2.3283064365386963e-10
+    i2_32m1 = 2.328306437080797e-10           # R's fixup(): never 0 or 1
+    u = np.where(u <= 0.0, 0.5 * i2_32m1, u)
+    return np.where(1.0 - u <= 0.0, 1.0 - 0.5 * i2_32m1, u)
+
+
+def r_rnorm(n, seed, mean=0.0, sd=1.0):
+    """R's ``set.seed(seed); rnorm(n, mean, sd)``.
+
+    Agrees with R to about 1e-16 (scipy's ``ndtri`` and R's ``qnorm`` differ in
+    the last bit).
+    """
+    from scipy.special import ndtri
+    n = int(n)
+    if n <= 0:
+        return np.zeros(0)
+    u = r_runif(2 * n, seed).reshape(n, 2)
+    big = 134217728.0                          # R's BIG = 2^27 (Inversion)
+    v = (np.floor(big * u[:, 0]) + u[:, 1]) / big
+    return mean + sd * ndtri(v)
 
 
 def as_matrix_list(Y):

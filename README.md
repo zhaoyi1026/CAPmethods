@@ -108,11 +108,12 @@ See **[app/README.md](app/README.md)** for full install and launch instructions.
 ## Python package
 
 A companion Python package, **`capcov`** (in [`Python/`](Python/)), ports the CAP
-family to Python (numpy/scipy). Implemented and verified against this R package
-(version 0.1.0): HDCAP/CAP, CAP-CoC, LCAP, CAP-mediation, CAP-clustering (MCAP and
-CAP-HDcov are planned). The 0.2.0 changes to HDCAP and CAP-CoC (initial values of
-β, the objective that compares initial values) are not yet ported to Python.
-Install from the cloned repository:
+family to Python (numpy/scipy). Implemented and verified against this R package:
+HDCAP/CAP, CAP-CoC, LCAP, CAP-mediation, CAP-clustering (MCAP and CAP-HDcov are
+planned). `capcov` 0.2.0 follows CAPmethods 0.2.0: the objective that compares
+initial values and the several initial values of β of HDCAP and CAP-CoC (the
+default ones are R's numbers), and the handling of directions that cannot be
+estimated. Install from the cloned repository:
 
 ```bash
 git clone https://github.com/zhaoyi1026/CAPmethods.git

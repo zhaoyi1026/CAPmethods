@@ -355,6 +355,8 @@ def cap_pcl(Y, X, W, ncluster=2, stop_crt="nD", nD=None, DfD_thred=2.0, H=None,
         H = _accum(S, Tvec) / Tvec.sum()
 
     re1 = _cap_pcl_d1_opt(Y, X, W, H, ncluster, max_itr, tol, ninitial, seed)
+    if re1 is None:
+        raise RuntimeError("capPCL_D1_opt: no initial value of gamma gave an estimate.")
     Gamma = [re1["gamma"]]
     res = [re1]
     if verbose:
@@ -365,18 +367,24 @@ def cap_pcl(Y, X, W, ncluster=2, stop_crt="nD", nD=None, DfD_thred=2.0, H=None,
         if verbose:
             print(f"Component {len(Gamma)}")
 
+    def _next():
+        # the next direction; None (stop) when it cannot be estimated (as R's try())
+        try:
+            return _cap_pcl_dk(Y, X, W, np.column_stack(Gamma), H, ncluster,
+                               max_itr, tol, ninitial, seed)
+        except Exception:
+            return None
+
     if stop_crt == "nD":
         for _ in range(2, nD + 1):
-            rt = _cap_pcl_dk(Y, X, W, np.column_stack(Gamma), H, ncluster,
-                             max_itr, tol, ninitial, seed)
+            rt = _next()
             if rt is None:
                 break
             _grow(rt)
     elif stop_crt == "DfD":
         DfD = 1.0
         while DfD < DfD_thred:
-            rt = _cap_pcl_dk(Y, X, W, np.column_stack(Gamma), H, ncluster,
-                             max_itr, tol, ninitial, seed)
+            rt = _next()
             if rt is None:
                 break
             cand = np.column_stack(Gamma + [rt["gamma"]])

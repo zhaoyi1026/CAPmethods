@@ -471,11 +471,13 @@ def _cap_d1_opt(Y, X, cov_shrinkage, max_itr, tol, ninitial, seed):
                             bt["beta1_random"], bt["beta"][0], bt["beta"][1:],
                             bt["beta0_sigma2"], Omd, n, q)
         except Exception:
-            obj = np.inf
-        if obj < best_obj:
+            continue          # as R (V7): no objective, this initial value is not used
+        if np.isnan(obj):
+            continue
+        if best is None or obj < best_obj:
             best_obj = obj
             best = rk
-    return best
+    return best               # None when no initial value gave an estimate
 
 
 def _deflate(Y, Phi0, cov_shrinkage, beta_list, nT):
@@ -550,6 +552,8 @@ def cap_reg(Y, X, stop_crt="nD", nD=None, DfD_thred=5.0, OC=False,
         cov_shrinkage = True
 
     re1 = _cap_d1_opt(Y, X, cov_shrinkage, max_itr, tol, ninitial, seed)
+    if re1 is None:
+        raise RuntimeError("cap_D1_opt: no initial value of gamma gave an estimate.")
     Phi = [re1["gamma"]]
     beta = [re1["beta"]]
     betas = [re1]
@@ -561,24 +565,27 @@ def cap_reg(Y, X, stop_crt="nD", nD=None, DfD_thred=5.0, OC=False,
         if verbose:
             print(f"Component {len(Phi)}")
 
-    if stop_crt == "nD":
-        for j in range(2, nD + 1):
+    def _next():
+        # the next direction; None (stop) when it cannot be estimated (as R's try())
+        try:
             Phi0 = np.column_stack(Phi)
             beta_list = [cap_beta(Y, X, Phi0[:, jj], cov_shrinkage=cov_shrinkage,
                                   max_itr=max_itr, tol=tol) for jj in range(Phi0.shape[1])]
             Yt = _deflate(Y, Phi0, cov_shrinkage, beta_list, nT_list)
-            re_tmp = _cap_d1_opt(Yt, X, cov_shrinkage, max_itr, tol, ninitial, seed)
+            return _cap_d1_opt(Yt, X, cov_shrinkage, max_itr, tol, ninitial, seed)
+        except Exception:
+            return None
+
+    if stop_crt == "nD":
+        for j in range(2, nD + 1):
+            re_tmp = _next()
             if re_tmp is None:
                 break
             _grow(re_tmp)
     elif stop_crt == "DfD":
         DfD = 1.0
         while DfD < DfD_thred:
-            Phi0 = np.column_stack(Phi)
-            beta_list = [cap_beta(Y, X, Phi0[:, jj], cov_shrinkage=cov_shrinkage,
-                                  max_itr=max_itr, tol=tol) for jj in range(Phi0.shape[1])]
-            Yt = _deflate(Y, Phi0, cov_shrinkage, beta_list, nT_list)
-            re_tmp = _cap_d1_opt(Yt, X, cov_shrinkage, max_itr, tol, ninitial, seed)
+            re_tmp = _next()
             if re_tmp is None:
                 break
             cand = np.column_stack(Phi + [re_tmp["gamma"]])

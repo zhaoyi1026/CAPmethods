@@ -27,10 +27,46 @@ CAP-mediation are approximate ports (they substitute a self-contained solver for
 an R package: `brglm2::brmultinom` and `nlme::lme` respectively) verified to agree
 with R / recover the truth on the identifiable quantities.
 
+## What's new in 0.2.0
+
+capcov 0.2.0 follows the R package CAPmethods 0.2.0 (HDCAP V9, CAP-CoC V4):
+
+- **HDCAP / CAP: the objective.** The initial values of a direction are compared
+  by the function the fit minimizes, `Σᵢ Tᵢ (xᵢ'β + sᵢ e^(−xᵢ'β))` at `γ'Hγ = 1`:
+  `sᵢ = γ'Sᵢγ` without shrinkage (the negative log-likelihood), and with
+  shrinkage the shrunk score of the β fit, `ρ₁γ'γ + ρ₂γ'Σᵢγ` (`Σᵢ` the
+  per-subject `cov_ls`, `ρ₁, ρ₂` the fit's weights at β). 0.1.0 used the
+  objective of the earlier R versions (shrinkage weights of another formula on
+  the sample covariances, also for a fit without shrinkage). New:
+  `capcov.obj_func(Y, X, gamma, beta, cov_shrinkage)`.
+- **HDCAP / CAP: several initial values of β** — argument `beta0` of `cap_reg`,
+  `cap_beta` and `cap_beta_boot`: a vector of length q or a `q × m` array (one
+  initial value per column). The default is two, `0` and
+  `capcov.cap_beta0_v5(q)`, R's `set.seed(100); c(0, rnorm(q − 1, 1, 1))` — the
+  same numbers as in R, drawn without changing numpy's random numbers. Every
+  initial value of γ runs from every initial value of β, and every β fit keeps
+  the converged estimate with the lowest objective. 0.1.0 started from 0 only
+  (`beta0=np.zeros(q)`).
+- **HDCAP / CAP: initial values of γ** — `cap_reg(gamma0_mat=...)` (`p × k`); by
+  default at most 10, as in R (0.1.0 used all `p + 6` random initial values).
+- **CAP-CoC.** The objective that compares initial values uses the outcome
+  covariances the fit iterates on (with outcome shrinkage `cov_sk_y` at the
+  fitted variances, not the per-subject `cov_ls`); several initial values of β,
+  `beta0` of `coc_reg`, `coc_coef`, `coc_coef_asmp` and `coc_coef_boot` (default
+  `0` and `capcov.coc_beta0_v3(r)`, R's numbers; α starts at 0; 0.1.0: `0`);
+  `coc_reg(gamma0_mat=..., theta0_mat=...)`.
+- **All methods: failures.** A first direction that cannot be estimated raises a
+  `RuntimeError` that names the step (0.1.0: a `TypeError` on `None`); a later
+  direction that cannot be estimated ends the search, as R's `try()` does; an
+  initial value whose fit or objective fails is left out.
+
+Fits can differ from 0.1.0 where the new objective or initial values select
+another candidate.
+
 ## Install
 
 ```bash
-cd CAP-Python/260605
+cd CAPmethods/Python          # in a clone of the repository
 pip install -e .            # core (numpy, scipy) -> HDCAP/CAP
 pip install -e ".[full]"    # + scikit-learn / statsmodels / pandas (for the planned methods)
 ```
@@ -74,18 +110,23 @@ fit["beta"]           # q x nD covariate effects on log projected-variance
 fit["score"]          # n x nD subject projected variances
 fit["DfD"]            # {'avg_level', 'sub_level'}
 
+# initial values: beta0 (default 0 and capcov.cap_beta0_v5(q)), gamma0_mat (p x k)
+fit0 = capcov.cap_reg(Y, X, nD=2, beta0=np.zeros(X.shape[1]))   # one initial value of beta
+capcov.obj_func(Y, X, fit["gamma"][:, 0], fit["beta"][:, 0])     # objective of (gamma, beta)
+
 # bootstrap inference for beta at a fixed direction
 inf = capcov.cap_beta_boot(Y, X, fit["gamma"][:, 0], cov_shrinkage=False, sims=500)
 inf["estimate"], inf["se"], inf["pvalue"], inf["lower"], inf["upper"]
 ```
 
 `cap_reg` returns the directions; `cov_shrinkage` is auto-enabled when
-`min_i T_i - 5 < p`.
+`min_i T_i - 5 < p`. A first direction that cannot be estimated raises
+`RuntimeError`; a later one ends the search.
 
 ## Usage (CAP-CoC)
 
 ```python
-import capcov
+import numpy as np, capcov
 
 # Y, X: lists of (T_i x q) / (T_i x p) arrays; W: (n x r) covariates incl. intercept
 fit = capcov.coc_reg(Y, X, W, stop_crt="nD", nD=2)        # or stop_crt="DfD", DfD_thred=2
@@ -97,6 +138,9 @@ fit["DfD_y"], fit["DfD_x"]          # deviation-from-diagonality per direction
 # inference for (alpha, beta) at a fixed (gamma, theta):
 capcov.coc_coef_asmp(Y, X, W, gamma, theta)     # asymptotic
 capcov.coc_coef_boot(Y, X, W, gamma, theta, sims=500)   # bootstrap
+
+# initial values of beta (default 0 and capcov.coc_beta0_v3(r)); alpha starts at 0
+fit = capcov.coc_reg(Y, X, W, stop_crt="nD", nD=2, beta0=np.zeros(W.shape[1]))
 ```
 
 Models `log(gamma' Sy_i gamma) = alpha * log(theta' Sx_i theta) + W_i' beta`;
@@ -153,26 +197,47 @@ cf["class"], cf["logLik"]
 
 ## Verification
 
-Validated against the R `capReg` on identical simulated data
-(`tests/` has the R-free regression tests; the R cross-check script lives in the
-project history):
+`tests/` has the R-free regression tests. The R cross-checks (2026-11-23, R 4.6.1)
+ran against the installed R package CAPmethods 0.2.0 on identical data, with the
+same initial values of γ (`gamma0_mat`, `ninitial` = its number of columns) and
+the default initial values of β.
+
+HDCAP / CAP vs R `capReg`:
 
 - `cov_ls` linear shrinkage: **bit-identical** (max|Δ| ≈ 1e-15).
-- **CAP** (`cov_shrinkage=False`): γ cosine = 1.000, β within ~1e-10 of R.
-- **HDCAP** (`cov_shrinkage=True`): γ cosine ≈ 0.99999, β within ~1e-3 (the
-  shrinkage-weight iteration path differs slightly between the RNG-seeded R init
-  and the Python init; both converge to the same estimate and recover the truth).
+- R's random numbers: `_core.r_runif` / `r_rnorm` reproduce `set.seed(s); runif(n)`
+  / `rnorm(n)` (runif bit-identical, rnorm to ≈ 2e-16), so `cap_beta0_v5` is R's
+  initial value of β.
+- `obj_func` (with and without shrinkage) and `cap_beta`: identical (relative
+  Δ ≈ 1e-15; β within 4e-9 without shrinkage, where the two initial values reach
+  the same β within the tolerance).
+- **HDCAP** (`cov_shrinkage=True`, two directions; a simulation with p = 8 and
+  the package example with p = 20): γ, β and scores **identical** (max|Δ| ≈ 1e-13).
+- **CAP** (`cov_shrinkage=False`, two directions): direction 1 identical
+  (max|Δ| ≈ 2e-10); direction 2 within 2e-3 in γ (cosine 0.999994) and 7e-5 in β.
+  Before the second direction the data are deflated with an SVD whose basis for
+  the removed direction is arbitrary, and R's LAPACK and numpy's choose different
+  vectors; on R's deflated data the Python search returns R's direction exactly.
 
-CAP-CoC validated against R `COCReg` on identical simulated data:
+CAP-CoC vs R `COCReg`:
 
 - `cov.ls` / `cov.sk.x` / `cov.sk.y` covariance kernels: **bit-identical** (max|Δ| ≈ 1e-15).
-- **`COCReg.coef`** (alpha/beta given gamma, theta): match within ~1e-7 (no
-  shrinkage) and ~1e-6 (shrinkage).
-- **`COCReg`** (`nD=2`): γ cosine = `[1.000, 0.9998]`, θ cosine = `[1.000, 1.000]`,
-  α/β direction-1 essentially exact (β max|Δ| ≈ 1.6e-5), DfD within ~1e-3 (the
-  small direction-2 gap is the shrinkage covariance-update path, as for HDCAP).
-- **`COCReg.coef.asmp`** asymptotic inference (α, β SE / statistic / p-value /
-  CI): identical to 4 decimals.
+- **`COCReg.coef`** (α, β given γ, θ; with and without shrinkage), the objective
+  with outcome shrinkage, and **`COCReg.coef.asmp`** (estimates, SE, p-values,
+  CI): identical (max|Δ| ≈ 1e-15).
+- **`COCReg`** on the package example with its recovering settings (`Hy = I`,
+  `Hx = I`, `burn_in = 200`, nD = 1): γ identical (7e-16); θ, α, β within 6e-5
+  (the convergence tolerance).
+- On a simulation where CoC is weakly identified with the default `Hy`, `Hx`
+  (the one initial value that finds the true direction has the highest
+  objective), some initial values are numerically unstable: a relative change
+  of 1e-12 in the start changes the direction they reach. R and Python reach
+  different directions from these, so `COCReg` can return other directions; the
+  stable initial values agree with R (≈ 1e-6).
+
+The LCAP, CAP-mediation and CAP-clustering code of CAPmethods 0.2.0 gives the
+results of the versions compared below (bit-identical in R), so these
+comparisons carry over; capcov 0.2.0 adds their handling of failures.
 
 LCAP validated against R `capReg` on identical simulated data:
 
@@ -227,9 +292,10 @@ pip install -e ".[test]" && pytest -q
 ```
 capcov/
   _core.py      # shared: cov_ls shrinkage, sigma_cube, scores, accum,
-                #         gamma_solve (generalized eigenproblem), diag_level (DfD)
-  hdcap.py      # HDCAP/CAP: cap_reg, cap_beta, cap_beta_boot   [done]
-  coc.py        # CAP-CoC: coc_reg, coc_coef, coc_coef_asmp, coc_coef_boot  [done]
+                #         gamma_solve (generalized eigenproblem), diag_level (DfD),
+                #         r_runif / r_rnorm (R's random numbers)
+  hdcap.py      # HDCAP/CAP: cap_reg, cap_beta, cap_beta_boot, obj_func, cap_beta0_v5  [done]
+  coc.py        # CAP-CoC: coc_reg, coc_coef, coc_coef_asmp, coc_coef_boot, coc_beta0_v3  [done]
   lcap.py       # LCAP: cap_reg, cap_beta, cap_beta_boot, diag_level  [done]
   clustering.py # CAP-clustering: cap_pcl, cap_pcl_coef, cap_pcl_coef_boot  [done]
   mediation.py  # CAP-mediation: cap_med, cap_med_coef, cap_med_d1  [done]
@@ -267,7 +333,7 @@ parity method-by-method.
 
 ## References
 
-Source of truth: `setting.md` in the project root. Access programmatically via
+The citations are the R package's. Access them programmatically via
 `capcov.references()` (all methods) or `capcov.references("coc")` (one method);
 the data live in `capcov.REFERENCES`.
 

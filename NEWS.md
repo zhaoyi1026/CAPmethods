@@ -53,6 +53,14 @@ CAP clustering V5.
   `coc()` are drawn as before (`set.seed(100)`) but no longer reset the caller's
   random-number stream.
 
+## Python package
+
+* `capcov` 0.2.0 (in `Python/`) follows these changes: for HDCAP/CAP and CAP-CoC
+  the objective that compares initial values and several initial values of β
+  (`beta0`; the default ones are R's numbers), and for every method a clear
+  error when the first direction cannot be estimated, the end of the search when
+  a later one cannot.
+
 # CAPmethods 0.1.0 (2026-06-05)
 
 * First version: HDCAP, LCAP, MCAP, CAP-CoC, CAP-mediation, HCAP and CAP

@@ -206,11 +206,13 @@ def _cap_med_d1_opt(X, M, Y, M_cov, nT, H, max_itr, tol, ninitial, seed, blup_sh
             c_un = cap_med_coef(X, M, Y, g_un, M_cov=M_cov, nT=nT, blup_shrink=blup_shrink)
             obj = _obj_func(X, M_cov, Y, nT, g_un, c_un)
         except Exception:
-            obj = np.inf
-        if obj < best_obj:
+            continue          # as R (V5): no objective, this initial value is not used
+        if np.isnan(obj):
+            continue
+        if best is None or obj < best_obj:
             best_obj = obj
             best = rk
-    return best
+    return best               # None when no initial value gave an estimate
 
 
 def _diag_level(M_cov, Theta, nT):
@@ -249,6 +251,8 @@ def cap_med(X, M, Y, H=None, stop_crt="nD", nD=None, DfD_thred=2.0, Y_remove=Tru
         H = M_cov.mean(axis=2)
 
     re1 = _cap_med_d1_opt(X, M, Y, M_cov, nT, H, max_itr, tol, ninitial, seed, blup_shrink)
+    if re1 is None:
+        raise RuntimeError("CAPMediation_D1_opt: no initial value of theta gave an estimate.")
     Theta = [re1["theta"]]
     res = [re1]
     if verbose:
@@ -266,20 +270,25 @@ def cap_med(X, M, Y, H=None, stop_crt="nD", nD=None, DfD_thred=2.0, Y_remove=Tru
         Sc, nt = _med_cov(Mt)
         return Mt, Sc, nt
 
+    def _next():
+        # the next direction; None (stop) when it cannot be estimated (as R's try())
+        try:
+            Mt, Sc, nt = _deflate(np.column_stack(Theta))
+            return _cap_med_d1_opt(X, Mt, Y, Sc, nt, Sc.mean(axis=2), max_itr, tol,
+                                   ninitial, seed, blup_shrink)
+        except Exception:
+            return None
+
     if stop_crt == "nD":
         for _ in range(2, nD + 1):
-            Mt, Sc, nt = _deflate(np.column_stack(Theta))
-            rt = _cap_med_d1_opt(X, Mt, Y, Sc, nt, Sc.mean(axis=2), max_itr, tol,
-                                 ninitial, seed, blup_shrink)
+            rt = _next()
             if rt is None:
                 break
             _grow(rt)
     elif stop_crt == "DfD":
         DfD = 1.0
         while DfD < DfD_thred:
-            Mt, Sc, nt = _deflate(np.column_stack(Theta))
-            rt = _cap_med_d1_opt(X, Mt, Y, Sc, nt, Sc.mean(axis=2), max_itr, tol,
-                                 ninitial, seed, blup_shrink)
+            rt = _next()
             if rt is None:
                 break
             cand = np.column_stack(Theta + [rt["theta"]])

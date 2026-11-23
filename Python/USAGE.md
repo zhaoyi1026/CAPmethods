@@ -7,7 +7,12 @@ verification notes see [`README.md`](README.md) in this folder.
 
 Implemented methods (all verified against the R reference): **HDCAP/CAP**,
 **CAP-CoC**, **LCAP**, **CAP-mediation**, **CAP-clustering**. (`mcap` and `hdcov`
-import but raise `NotImplementedError` until ported.)
+import but raise `NotImplementedError` until ported.) capcov 0.2.0 follows the R
+package CAPmethods 0.2.0; what changed is listed in [`README.md`](README.md).
+
+In every method, a first direction that cannot be estimated raises a
+`RuntimeError`; a later direction that cannot be estimated ends the search (the
+directions found so far are returned).
 
 ## The pattern
 
@@ -31,7 +36,7 @@ Plain CAP is HDCAP with shrinkage off (`cov_shrinkage=False`); `cov_shrinkage=Tr
 adds linear (Ledoit–Wolf) shrinkage and auto-enables when `min_i T_i − 5 < p`.
 
 ```python
-import capcov
+import numpy as np, capcov
 
 # Y: list of (T_i x p) arrays, one per subject;  X: (n x q) covariates (incl. intercept)
 fit = capcov.cap_reg(Y, X, stop_crt="nD", nD=2, cov_shrinkage=False)        # plain CAP
@@ -45,6 +50,23 @@ fit["DfD"]     # {'avg_level', 'sub_level'}
 # bootstrap inference for beta at one fitted direction
 inf = capcov.cap_beta_boot(Y, X, fit["gamma"][:, 0], cov_shrinkage=False, sims=500)
 inf["estimate"], inf["se"], inf["pvalue"], inf["lower"], inf["upper"]
+
+# the objective the fit minimizes, at (gamma, beta)
+capcov.obj_func(Y, X, fit["gamma"][:, 0], fit["beta"][:, 0], cov_shrinkage=False)
+```
+
+Initial values. Each direction is searched from several initial values of γ
+(`gamma0_mat`, a `p × k` array; default: random, at most `ninitial = 10`), each
+run from every initial value of β (`beta0`, a vector of length q or a `q × m`
+array; default: two, `0` and `capcov.cap_beta0_v5(q)` — R's
+`set.seed(100); c(0, rnorm(q − 1, 1, 1))`, the same numbers as in R). The
+candidates are compared by the function the fit minimizes, and every β fit keeps
+the converged estimate with the lowest objective. `cap_beta` and `cap_beta_boot`
+take `beta0` too.
+
+```python
+fit = capcov.cap_reg(Y, X, stop_crt="nD", nD=2, beta0=np.zeros(X.shape[1]))   # one initial value of beta
+fit = capcov.cap_reg(Y, X, stop_crt="nD", nD=2, gamma0_mat=G0)                # your own initial gammas
 ```
 
 ## CAP-CoC — `capcov.coc_reg`
@@ -65,6 +87,11 @@ fit["score_y"], fit["score_x"]  # n x k projected variances
 # inference for (alpha, beta) at fixed (gamma, theta)
 capcov.coc_coef_asmp(Y, X, W, gamma, theta)           # asymptotic
 capcov.coc_coef_boot(Y, X, W, gamma, theta, sims=500) # bootstrap
+
+# initial values: beta0 (r-vector or r x m array; default 0 and capcov.coc_beta0_v3(r),
+# R's numbers; alpha starts at 0), gamma0_mat / theta0_mat (q x k / p x k; default the
+# leading eigenvectors of the average covariances)
+fit = capcov.coc_reg(Y, X, W, stop_crt="nD", nD=2, beta0=np.zeros(W.shape[1]))
 ```
 
 > On data like the bundled `coc_example` (two CoC pairs), pass identity weights
