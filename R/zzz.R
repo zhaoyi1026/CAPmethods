@@ -5,8 +5,11 @@
 # the single package namespace, every method's code is sourced into its OWN
 # private environment at load time (mirroring the Shiny app's design). The
 # private environments enclose the package namespace, so the method code resolves
-# imported functions (ginv, lme, rnorm, ...) and the registered C kernels via
-# unqualified .Call(); the kernels carry per-method symbol prefixes
+# imported functions (ginv, lme, rnorm, ...). Every .Call() in the method code
+# names the package DLL (PACKAGE = .<prefix>_vN_dll, set to "CAPmethods" when the
+# code is assembled by tools/build_caprpkg.R), so the registered kernels are used
+# even if a method's source folder kernel (same symbol names) is loaded in the same
+# session; the kernels carry per-method symbol prefixes
 # (hd_/lcap_/mlcap_/coc_/med_/hdcov_/cluster_) so they never clash in the DLL.
 
 # Registry of per-method environments (populated in .onLoad).

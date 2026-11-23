@@ -9,6 +9,14 @@
 //
 // Symbols are med_-prefixed to avoid colliding with the CAP/HDCAP/CoC kernels
 // that may be loaded in the same R process.
+//
+// CAP-mediation/V5: the kernels of V4, unchanged, except that each .Call entry
+// point is wrapped in BEGIN_RCPP / END_RCPP (as HDCAP V8).  In V4 a C++
+// exception (e.g. eig_sym() on a non-finite matrix when an iteration diverges,
+// or a conversion error) crossed the extern "C" boundary uncaught and aborted the
+// R process; now it is an ordinary R error, which the try() calls of
+// CAPMediation.R catch (a failed initial value or bootstrap draw is skipped).
+// CAPMediation.R names the V5 kernel in every .Call (PACKAGE).
 // =============================================================================
 #include <RcppArmadillo.h>
 using namespace arma;
@@ -57,14 +65,22 @@ static cube cov_core(const List& M) {
 
 // ---- extern "C" wrappers ----------------------------------------------------
 extern "C" SEXP med_score_cpp(SEXP S_, SEXP v_) {
+BEGIN_RCPP
   return wrap(score_core(as<cube>(S_), as<vec>(v_)));
+END_RCPP
 }
 extern "C" SEXP med_accum_cpp(SEXP S_, SEXP w_) {
+BEGIN_RCPP
   return wrap(accum_core(as<cube>(S_), as<vec>(w_)));
+END_RCPP
 }
 extern "C" SEXP med_eigen_solve_cpp(SEXP A_, SEXP H_) {
+BEGIN_RCPP
   return wrap(eigen_solve_core(as<mat>(A_), as<mat>(H_)));
+END_RCPP
 }
 extern "C" SEXP med_cov_cpp(SEXP M_) {
+BEGIN_RCPP
   return wrap(cov_core(as<List>(M_)));
+END_RCPP
 }

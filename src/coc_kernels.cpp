@@ -8,6 +8,14 @@
 //
 // Symbols are coc_-prefixed to avoid colliding with the CAP/HDCAP kernels that
 // may be loaded in the same R process.
+//
+// CAP-CoC/V4: the kernels of V3, unchanged, except that each .Call entry point
+// is wrapped in BEGIN_RCPP / END_RCPP (as HDCAP V8).  In V3 a C++ exception
+// (e.g. eig_sym() on a non-finite matrix when an iteration diverges, or a
+// conversion error) crossed the extern "C" boundary uncaught and aborted the R
+// process; now it is an ordinary R error, which the try() calls of COCReg.R
+// catch (a failed initial value or bootstrap draw is skipped).  COCReg.R names
+// the V4 kernel in every .Call (PACKAGE).
 // =============================================================================
 #include <RcppArmadillo.h>
 using namespace arma;
@@ -138,21 +146,35 @@ static vec eigen_solve_core(const mat& A, const mat& H) {
 }
 
 // ---- extern "C" wrappers ----------------------------------------------------
+// BEGIN_RCPP / END_RCPP (V4): a C++ exception becomes an R error instead of
+// aborting R.
 extern "C" SEXP coc_cov_ls_cpp(SEXP Y_) {
+BEGIN_RCPP
   return wrap(cov_ls_core(as<mat>(Y_)));
+END_RCPP
 }
 extern "C" SEXP coc_cov_sk_x_cpp(SEXP X_) {
+BEGIN_RCPP
   return wrap(cov_sk_x_core(as<List>(X_)));
+END_RCPP
 }
 extern "C" SEXP coc_cov_sk_y_cpp(SEXP Y_, SEXP gamma_, SEXP kappa_) {
+BEGIN_RCPP
   return wrap(cov_sk_y_core(as<List>(Y_), as<vec>(gamma_), as<vec>(kappa_)));
+END_RCPP
 }
 extern "C" SEXP coc_score_cpp(SEXP S_, SEXP v_) {
+BEGIN_RCPP
   return wrap(score_core(as<cube>(S_), as<vec>(v_)));
+END_RCPP
 }
 extern "C" SEXP coc_accum_cpp(SEXP S_, SEXP w_) {
+BEGIN_RCPP
   return wrap(accum_core(as<cube>(S_), as<vec>(w_)));
+END_RCPP
 }
 extern "C" SEXP coc_eigen_solve_cpp(SEXP A_, SEXP H_) {
+BEGIN_RCPP
   return wrap(eigen_solve_core(as<mat>(A_), as<mat>(H_)));
+END_RCPP
 }

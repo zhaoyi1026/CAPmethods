@@ -5,14 +5,50 @@
 # V7: RcppArmadillo-accelerated update of V6 (which removed the gamma sparsity).
 # Same interface and outputs as V6; the hot loops (cov.ls, cap_beta, the
 # method="CAP" estimator, objective) call a compiled kernel. See HDCAP/README.md.
+#
+# V8: V7 with an initial value of beta, argument beta0 (a length-q vector, q =
+# ncol(X)) of capReg, cap_D1_opt, cap_D1, cap_Dk, cap_beta and cap_beta_boot,
+# passed down to every beta iteration (the gamma/beta loop of each direction,
+# cap_beta, the bootstrap).  beta0 = NULL (default) is the V5-V7 start,
+# set.seed(100); c(0, rnorm(q-1, mean=1, sd=1)), so V8 with beta0 = NULL
+# reproduces V7.  The kernel (cap_kernels.cpp) is the same as V7's; it is built
+# once per R version and architecture (build_kernels.R).
+#
+# V9 (see HDCAP/README.md):
+# (1) The objective that chooses among the initial values (obj.func; kernel
+#     hd_objfunc_cpp) is the function the fit minimizes,
+#     sum_i T_i (x_i'beta + s_i exp(-x_i'beta)) with gamma'H gamma = 1:
+#     without covariance shrinkage s_i = gamma'S_i gamma (sample covariance S_i;
+#     the negative log-likelihood); with shrinkage s_i = rho1 gamma'gamma +
+#     rho2 gamma'Sigma_i gamma, the shrunk score of the beta iteration (Sigma_i
+#     the per-subject linear-shrinkage covariance cov.ls, computed once before
+#     the iterations; rho1 and rho2 the weights of the fit at (gamma, beta),
+#     shared by all subjects, as cap_beta's score.shrinkage).  Up to V8 it always
+#     applied shrinkage weights of another formula (psi2 without /T_i) to the
+#     sample-covariance scores, with or without shrinkage in the fit.
+# (2) Several initial values of beta.  beta0 is a vector (one initial value) or
+#     a matrix with ncol(X) rows (one initial value per column); beta0 = NULL
+#     (default) is two initial values, 0 and the V5-V8 default
+#     (cap_beta0_v5()).  cap_D1_opt runs every initial value of gamma from every
+#     initial value of beta and keeps the direction with the lowest objective;
+#     every beta fit (cap_beta: the final beta of a direction, the bootstrap)
+#     keeps the converged estimate with the lowest objective.
+# The kernel is the V8 kernel with (1); its file is cap_kernels_v9-R<..>-<arch>.
 #################################################
 
 
 #################################################
 # Load the compiled kernel (cap_kernels.cpp -> shared object), building it once
-# if necessary. Set option "hdcap.v7.dir" or variable HDCAP_V7_DIR to point at
-# the folder containing cap_kernels.cpp; defaults to "HDCAP/V7".
+# if necessary.  The kernel file is named after the R version and architecture
+# (cap_kernels_v9-R<major.minor>-<arch>.so, see build_kernels.R), so that machines
+# sharing this folder with different R versions each load their own build.
+# The folder: option "hdcap.v9.dir" or variable HDCAP_V9_DIR if set, else the
+# folder of this file when it is read with source(), else "HDCAP/V9", "V9" or ".".
 
+# .hdcap_v9_dll: name of the loaded V9 kernel; every .Call() names it (PACKAGE), so
+# that a V7 or V8 kernel loaded in the same session (same symbol names; V9's
+# hd_objfunc_cpp has one more argument) is never used by mistake
+.hdcap_v9_dll <- "CAPmethods"   # CAPmethods: the kernels are registered in the package DLL
 
 # Precompute each subject's covariance Sigma_i (linear shrinkage or sample MLE),
 # stacked as a p x p x n array, plus per-subject sizes and the weighted mean H.
@@ -24,7 +60,7 @@
   for (i in 1:n) {
     yi <- Y[[i]]; Tvec[i] <- nrow(yi)
     if (cov.shrinkage) {
-      cube[, , i] <- .Call("hd_covls_cpp", yi)
+      cube[, , i] <- .Call("hd_covls_cpp", yi, PACKAGE = .hdcap_v9_dll)
     } else {
       yc <- scale(yi, center = TRUE, scale = FALSE)
       cube[, , i] <- crossprod(yc) / Tvec[i]
@@ -35,8 +71,82 @@
   list(cube = cube, Tvec = Tvec, H = H, n = n, p = p)
 }
 
-# beta initial value used by V6 cap_beta / cap_D1 (kept for exact reproducibility)
-.cap_beta0 <- function(q) { set.seed(100); c(0, rnorm(q - 1, mean = 1, sd = 1)) }
+# The V5-V8 default initial value of beta: 0 for the intercept, N(1,1) draws for
+# the other coefficients under set.seed(100).  V9 draws it without changing the
+# random number stream of the caller (V5-V8 left it at set.seed(100)).
+cap_beta0_v5 <- function(q)
+{
+  had <- exists(".Random.seed", envir = globalenv(), inherits = FALSE)
+  if (had) old <- get(".Random.seed", envir = globalenv(), inherits = FALSE)
+  on.exit({
+    if (had) assign(".Random.seed", old, envir = globalenv())
+    else if (exists(".Random.seed", envir = globalenv(), inherits = FALSE))
+      rm(".Random.seed", envir = globalenv())
+  })
+  set.seed(100)
+  c(0, rnorm(q - 1, mean = 1, sd = 1))
+}
+
+# initial values of beta as a q x m matrix, one column per initial value:
+#   beta0 = NULL (default): two, 0 and the V5-V8 default (cap_beta0_v5)
+#   a vector of length q: that one;  a matrix with q rows: its columns
+.cap_beta0 <- function(q, beta0 = NULL)
+{
+  if (is.null(beta0)) return(cbind(rep(0, q), cap_beta0_v5(q)))
+  B0 <- if (is.matrix(beta0)) beta0 else matrix(as.numeric(beta0), ncol = 1)
+  if (!is.numeric(B0) || nrow(B0) != q || ncol(B0) < 1 || any(!is.finite(B0)))
+    stop("beta0 must be a finite numeric vector of length ncol(X) = ", q,
+         ", or a matrix with ", q, " rows (one initial value per column).")
+  storage.mode(B0) <- "double"
+  B0
+}
+
+# objective of (gamma, beta), the function the fit minimizes (kernel
+# hd_objfunc_cpp): sum_i T_i (x_i'beta + s_i exp(-x_i'beta)), score_i =
+# gamma' Sigma_i gamma with the covariances of the fit; s_i = score_i without
+# covariance shrinkage, s_i = rho1 gg + rho2 score_i with shrinkage (the weights
+# of the fit at beta, shared by all subjects)
+.cap_obj <- function(score, gg, X, Tvec, beta, cov.shrinkage)
+{
+  as.numeric(.Call("hd_objfunc_cpp", as.numeric(score), gg, X, Tvec, as.numeric(beta),
+                   cov.shrinkage, PACKAGE = .hdcap_v9_dll))
+}
+
+# beta given gamma, from every initial value of beta (columns of B0).  score:
+# gamma' Sigma_i gamma with the covariances of the fit, for the beta iteration
+# and the objective.  Kept: the converged estimate with the lowest objective (a
+# non-converged one only when none converged).  An error when no initial value
+# gives a finite estimate.
+.cap_beta_fit <- function(score, gg, X, Tvec, cov.shrinkage, B0, max.itr, tol)
+{
+  best <- NULL
+  for (j in seq_len(ncol(B0))) {
+    r <- tryCatch(.Call("hd_capbeta_cpp", score, gg, X, Tvec, cov.shrinkage, as.numeric(B0[, j]),
+                        as.integer(max.itr), tol, PACKAGE = .hdcap_v9_dll),
+                  error = function(e) NULL)
+    if (is.null(r)) next
+    b <- as.numeric(r$beta)
+    if (any(!is.finite(b))) next
+    ob <- .cap_obj(score, gg, X, Tvec, b, cov.shrinkage)
+    if (!is.finite(ob)) ob <- Inf
+    cand <- list(beta = b, conv = (r$iter < max.itr), obj = ob, start = j)
+    if (is.null(best) || (cand$conv && !best$conv) ||
+        (cand$conv == best$conv && cand$obj < best$obj)) best <- cand
+  }
+  if (is.null(best)) stop("cap_beta: beta could not be estimated from any initial value of beta.")
+  best
+}
+
+# objective of a direction, as cap_D1_opt compares its initial values: gamma
+# scaled to gamma'H gamma = 1, beta from every initial value of beta
+# (.cap_beta_fit), the objective with the covariance shrinkage of the fit
+.cap_dir_obj <- function(gamma, Sigma, H, X, Tvec, cov.shrinkage, B0, max.itr, tol)
+{
+  gamma <- as.numeric(gamma)
+  gu <- gamma / sqrt(as.numeric(t(gamma) %*% H %*% gamma))
+  sc <- as.numeric(.Call("hd_score_cpp", Sigma, gu, PACKAGE = .hdcap_v9_dll))
+  .cap_beta_fit(sc, sum(gu^2), X, Tvec, cov.shrinkage, B0, max.itr, tol)$obj
+}
 
 #################################################
 # standardized Frobenius norm
@@ -56,45 +166,48 @@ norm.F.std<-function(A1,A2=NULL)
 
 #################################################
 # objective function
-obj.func<-function(Y,X,gamma,beta)
+# V9: the function the fit minimizes, with the covariance shrinkage of the fit
+# (forced, as in the fit, when min(T)-5 < p):
+#   sum_i T_i (x_i'beta + s_i exp(-x_i'beta)), score_i = gamma' Sigma_i gamma
+#   without shrinkage: Sigma_i the sample covariance (MLE), s_i = score_i
+#   with shrinkage: Sigma_i the per-subject linear-shrinkage covariance (cov.ls)
+#     and s_i = rho1 gamma'gamma + rho2 score_i with the weights of the fit at
+#     (gamma, beta), shared by all subjects (as cap_beta's shrinkage and
+#     score.shrinkage)
+# Up to V8: the weights of another formula (psi2 without /T_i) on the
+# sample-covariance scores, with or without shrinkage in the fit.  Same values
+# as the kernel hd_objfunc_cpp.
+obj.func<-function(Y,X,gamma,beta,cov.shrinkage=FALSE)
 {
-  n<-length(Y)
   p<-ncol(Y[[1]])
-  Tvec<-rep(NA,n)
-  
-  q<-ncol(X)
-  
-  # Estimate covariance matrix for each subject
-  Sigma<-array(NA,c(p,p,n))
-  H<-matrix(0,p,p)
-  for(i in 1:n)
+  if(min(sapply(Y,nrow))-5<p)
   {
-    Tvec[i]<-nrow(Y[[i]])
-    
-    Sigma[,,i]<-t(scale(Y[[i]],center=TRUE,scale=FALSE))%*%(scale(Y[[i]],center=TRUE,scale=FALSE))/nrow(Y[[i]])
-    
-    H<-H+Sigma[,,i]*Tvec[i]
+    cov.shrinkage<-TRUE
   }
-  H<-H/sum(Tvec)
-  
-  score<-apply(Sigma,3,function(x){return(t(gamma)%*%x%*%gamma)})
-  
-  # linear shrinkage on covariance matrix
-  mu<-mean(exp(X%*%beta))/(t(gamma)%*%gamma)[1,1]
-  delta2<-mean((score-mu*(t(gamma)%*%gamma)[1,1])^2)
-  psi2<-min(mean((score-c(exp(X%*%beta)))^2),delta2)
-  phi2<-delta2-psi2
-  # phi2<-mean((mu*(t(gamma)%*%gamma)[1,1]-exp(X%*%beta))^2)
-  rho1<-psi2*mu/delta2
-  rho2<-phi2/delta2
-  
-  obj<-0
-  for(i in 1:n)
+
+  # covariance matrix of each subject, as in the fit
+  S<-.cap_sigma(Y,cov.shrinkage)
+  Tvec<-S$Tvec
+
+  gamma<-as.numeric(gamma)
+  gg<-sum(gamma^2)
+  score<-apply(S$cube,3,function(x){return(as.numeric(t(gamma)%*%x%*%gamma))})
+  Xbeta<-as.numeric(X%*%beta)
+
+  s<-score
+  if(cov.shrinkage)
   {
-    Stmp<-rho1*diag(rep(1,p))+rho2*Sigma[,,i]
-    obj<-obj+Tvec[i]*(t(X[i,])%*%beta+exp(-t(X[i,])%*%beta)*(t(gamma)%*%Stmp%*%gamma))[1,1]
+    # linear shrinkage weights of the fit (cap_beta), shared by all subjects
+    mu<-mean(exp(Xbeta))/gg
+    delta2<-mean((score-mu*gg)^2)
+    psi2<-min(mean((score-exp(Xbeta))^2/Tvec),delta2)
+    phi2<-delta2-psi2
+    rho1<-psi2*mu/(psi2+phi2)
+    rho2<-phi2/(psi2+phi2)
+    s<-rho1*gg+rho2*score
   }
-  
+  obj<-sum(Tvec*(Xbeta+s*exp(-Xbeta)))
+
   re<-data.frame(obj=obj,sum=obj)
 
   return(re)
@@ -103,11 +216,11 @@ obj.func<-function(Y,X,gamma,beta)
 # linear shrinkage of covariance matrix (RcppArmadillo kernel)
 cov.ls<-function(X)
 {
-  matrix(.Call("hd_covls_cpp", as.matrix(X)), nrow = ncol(X))
+  matrix(.Call("hd_covls_cpp", as.matrix(X), PACKAGE = .hdcap_v9_dll), nrow = ncol(X))
 }
 
 # given gamma, estimate beta
-cap_beta<-function(Y,X,gamma,cov.shrinkage=TRUE,max.itr=1000,tol=1e-4,trace=FALSE,score.return=TRUE)
+cap_beta<-function(Y,X,gamma,cov.shrinkage=TRUE,max.itr=1000,tol=1e-4,trace=FALSE,score.return=TRUE,beta0=NULL)
 {
   n<-length(Y)
   p<-ncol(Y[[1]])
@@ -124,13 +237,14 @@ cap_beta<-function(Y,X,gamma,cov.shrinkage=TRUE,max.itr=1000,tol=1e-4,trace=FALS
   }
 
   S<-.cap_sigma(Y,cov.shrinkage)
-  score<-as.numeric(.Call("hd_score_cpp",S$cube,as.numeric(gamma)))   # raw gamma' Sigma_i gamma
+  score<-as.numeric(.Call("hd_score_cpp",S$cube,as.numeric(gamma),PACKAGE=.hdcap_v9_dll))   # raw gamma' Sigma_i gamma
   gg<-sum(gamma^2)
 
-  beta0<-.cap_beta0(q)
-  res<-.Call("hd_capbeta_cpp",score,gg,X,S$Tvec,cov.shrinkage,beta0,as.integer(max.itr),tol)
-  beta.new<-as.numeric(res$beta)
-  conv<-(res$iter<max.itr)
+  # V9: from every initial value of beta, the converged estimate with the lowest objective
+  B0<-.cap_beta0(q,beta0)
+  res<-.cap_beta_fit(score,gg,X,S$Tvec,cov.shrinkage,B0,max.itr,tol)
+  beta.new<-res$beta
+  conv<-res$conv
 
   if(cov.shrinkage)
   {
@@ -214,8 +328,43 @@ gamma.solve<-function(A,H)
 }
 
 # estimate both gamma and beta
-cap_D1<-function(Y,X,method=c("CAP"),cov.shrinkage=FALSE,max.itr=1000,tol=1e-4,score.return=TRUE,trace=FALSE,gamma0=NULL)
+cap_D1<-function(Y,X,method=c("CAP"),cov.shrinkage=FALSE,max.itr=1000,tol=1e-4,score.return=TRUE,trace=FALSE,gamma0=NULL,beta0=NULL)
 {
+  # initial value(s) of beta (q x m matrix; beta0 is the running value in the loop below)
+  beta0.start<-.cap_beta0(ncol(X),beta0)
+
+  if(ncol(beta0.start)>1)
+  {
+    # V9: one run per initial value of beta; the direction with the lowest
+    # objective, compared as in cap_D1_opt
+    Tvec.all<-sapply(Y,nrow)
+    cs<-cov.shrinkage|(min(Tvec.all)-5<ncol(Y[[1]]))
+    S<-.cap_sigma(Y,cs)
+    best<-NULL
+    best.obj<-Inf
+    for(jj in 1:ncol(beta0.start))
+    {
+      re.jj<-NULL
+      try(re.jj<-cap_D1(Y,X,method=method,cov.shrinkage=cov.shrinkage,max.itr=max.itr,tol=tol,score.return=score.return,trace=trace,
+                        gamma0=gamma0,beta0=beta0.start[,jj]))
+      if(is.null(re.jj)==FALSE)
+      {
+        ob<-NA
+        try(ob<-.cap_dir_obj(re.jj$gamma,S$cube,S$H,X,S$Tvec,cs,beta0.start,max.itr,tol))
+        if(is.finite(ob)&&ob<best.obj)
+        {
+          best<-re.jj
+          best.obj<-ob
+        }
+      }
+    }
+    if(is.null(best))
+    {
+      stop("cap_D1: no initial value of beta gave an estimate.")
+    }
+    return(best)
+  }
+
   n<-length(Y)
   p<-ncol(Y[[1]])
   Tvec<-rep(NA,n)
@@ -254,9 +403,7 @@ cap_D1<-function(Y,X,method=c("CAP"),cov.shrinkage=FALSE,max.itr=1000,tol=1e-4,s
   
   if(method[1]=="CAP")
   {
-    set.seed(100)
-    beta0<-c(0,rnorm(q-1,mean=1,sd=1))
-    # beta0<-rep(0,q)
+    beta0<-beta0.start[,1]
     if(is.null(gamma0))
     {
       gamma0<-rep(1/sqrt(p),p) 
@@ -362,7 +509,7 @@ cap_D1<-function(Y,X,method=c("CAP"),cov.shrinkage=FALSE,max.itr=1000,tol=1e-4,s
           rho.trace<-cbind(rho.trace,c(rho1,rho2)) 
         }
         
-        obj<-rbind(obj,obj.func(Y=Y,X=X,gamma=gamma.new,beta=beta.new))
+        obj<-rbind(obj,obj.func(Y=Y,X=X,gamma=gamma.new,beta=beta.new,cov.shrinkage=cov.shrinkage))
       }
       
       diff<-max(c(max(abs(gamma.new-gamma0)),max(abs(beta.new-beta0))))
@@ -380,7 +527,7 @@ cap_D1<-function(Y,X,method=c("CAP"),cov.shrinkage=FALSE,max.itr=1000,tol=1e-4,s
     }
     gamma.est<-gamma.new
 
-    beta.est<-cap_beta(Y,X,gamma.est,cov.shrinkage=cov.shrinkage,max.itr=max.itr,tol=tol,trace=FALSE,score.return=FALSE)$beta
+    beta.est<-cap_beta(Y,X,gamma.est,cov.shrinkage=cov.shrinkage,max.itr=max.itr,tol=tol,trace=FALSE,score.return=FALSE,beta0=beta0.start)$beta
 
     score<-apply(Sigma,3,function(x){return(t(gamma.est)%*%x%*%gamma.est)})
     if(cov.shrinkage)
@@ -446,7 +593,7 @@ cap_D1<-function(Y,X,method=c("CAP"),cov.shrinkage=FALSE,max.itr=1000,tol=1e-4,s
 }
 
 # try several initial value of gamma and optimize over the objective function
-cap_D1_opt<-function(Y,X,method=c("CAP"),cov.shrinkage=FALSE,max.itr=1000,tol=1e-4,score.return=TRUE,trace=FALSE,gamma0.mat=NULL,ninitial=NULL,seed=500)
+cap_D1_opt<-function(Y,X,method=c("CAP"),cov.shrinkage=FALSE,max.itr=1000,tol=1e-4,score.return=TRUE,trace=FALSE,gamma0.mat=NULL,ninitial=NULL,seed=500,beta0=NULL)
 {
   n<-length(Y)
   p<-ncol(Y[[1]])
@@ -468,10 +615,9 @@ cap_D1_opt<-function(Y,X,method=c("CAP"),cov.shrinkage=FALSE,max.itr=1000,tol=1e
   }
   
   # Estimate covariance matrix for each subject (kernel) and the weighted mean H
+  # (V9: the objective uses the same covariances as the fit)
   S<-.cap_sigma(Y,cov.shrinkage)
   Sigma<-S$cube; Tvec<-S$Tvec; H<-S$H
-  # obj.func always uses the RAW sample covariance (even under shrinkage)
-  Sraw<-if(cov.shrinkage) .cap_sigma(Y,FALSE)$cube else Sigma
 
   if(method[1]=="CAP")
   {
@@ -495,37 +641,62 @@ cap_D1_opt<-function(Y,X,method=c("CAP"),cov.shrinkage=FALSE,max.itr=1000,tol=1e
     set.seed(seed)
     gamma0.mat<-matrix(gamma0.mat[,sort(sample(1:ncol(gamma0.mat),ninitial,replace=FALSE))],ncol=ninitial)
 
-    beta0<-.cap_beta0(q)
-    gamma.est.mat<-matrix(NA,p,ncol(gamma0.mat))
-    obj<-rep(NA,ncol(gamma0.mat))
+    # V9: every initial value of gamma from every initial value of beta (columns of
+    # B0); candidate (kk-1)*m0+jj is gamma start kk with beta start jj
+    B0<-.cap_beta0(q,beta0)
+    m0<-ncol(B0)
+    gamma.est.mat<-matrix(NA,p,ncol(gamma0.mat)*m0)
+    obj<-rep(NA,ncol(gamma0.mat)*m0)
     for(kk in 1:ncol(gamma0.mat))
     {
-      d1<-NULL
-      try(d1<-.Call("hd_capd1_cpp",Sigma,X,Tvec,H,as.numeric(gamma0.mat[,kk]),cov.shrinkage,beta0,as.integer(max.itr),tol))
-      if(is.null(d1)==FALSE)
+      for(jj in 1:m0)
       {
-        gnew<-as.numeric(d1$gamma)
-        gamma.est<-gnew/sqrt(sum(gnew^2))
-        if(gamma.est[which.max(abs(gamma.est))]<0)
+        cc<-(kk-1)*m0+jj
+        d1<-NULL
+        try(d1<-.Call("hd_capd1_cpp",Sigma,X,Tvec,H,as.numeric(gamma0.mat[,kk]),cov.shrinkage,as.numeric(B0[,jj]),as.integer(max.itr),tol,PACKAGE=.hdcap_v9_dll))
+        if(is.null(d1)==FALSE&&all(is.finite(d1$gamma)))
         {
-          gamma.est<--gamma.est
-        }
-        gamma.est.mat[,kk]<-gamma.est
+          gnew<-as.numeric(d1$gamma)
+          gamma.est<-gnew/sqrt(sum(gnew^2))
+          if(gamma.est[which.max(abs(gamma.est))]<0)
+          {
+            gamma.est<--gamma.est
+          }
+          gamma.est.mat[,cc]<-gamma.est
 
-        # objfunc evaluated at the H-unscaled gamma (matches V6 cap_D1_opt):
-        # beta from the (shrunk) cap_beta, objective from the RAW covariance.
-        gu<-gamma.est/sqrt((t(gamma.est)%*%H%*%gamma.est)[1,1])
-        sc.shrunk<-as.numeric(.Call("hd_score_cpp",Sigma,gu))
-        bt<-.Call("hd_capbeta_cpp",sc.shrunk,sum(gu^2),X,Tvec,cov.shrinkage,beta0,as.integer(max.itr),tol)
-        sc.raw<-as.numeric(.Call("hd_score_cpp",Sraw,gu))
-        obj[kk]<-as.numeric(.Call("hd_objfunc_cpp",sc.raw,sum(gu^2),X,Tvec,as.numeric(bt$beta)))
+          # objective at gamma scaled to gamma'H gamma = 1 (as V6 cap_D1_opt): beta from
+          # every initial value of beta, the objective with the covariance shrinkage of the
+          # fit (V9; .cap_dir_obj).  In try() as in V5/V6 (V8): when beta cannot be
+          # estimated, obj[cc] stays NA and this candidate is not used.
+          try(obj[cc]<-.cap_dir_obj(gamma.est,Sigma,H,X,Tvec,cov.shrinkage,B0,max.itr,tol))
+        }
       }
     }
-    opt.idx<-which.min(obj)
-    gamma.est<-gamma.est.mat[,opt.idx]
 
-    # finalize (matches V6 cap_D1 tail): beta/score/shrinkage from the final gamma
-    fin<-cap_beta(Y,X,gamma.est,cov.shrinkage=cov.shrinkage,max.itr=max.itr,tol=tol,trace=FALSE,score.return=TRUE)
+    # finalize (matches V6 cap_D1 tail): beta/score/shrinkage from the final gamma.
+    # V9: candidates are (gamma start, beta start) pairs; otherwise as V8.
+    # V8: the initial values in increasing order of the objective, the first one whose
+    # final beta can be estimated (as V5/V6, where an initial value whose cap_D1 failed
+    # was left out); for the best one, as in V7
+    ord<-order(obj,na.last=NA)
+    if(length(ord)==0)
+    {
+      stop("cap_D1_opt: no initial value of gamma gave an estimate.")
+    }
+    fin<-NULL
+    for(opt.idx in ord)
+    {
+      gamma.est<-gamma.est.mat[,opt.idx]
+      try(fin<-cap_beta(Y,X,gamma.est,cov.shrinkage=cov.shrinkage,max.itr=max.itr,tol=tol,trace=FALSE,score.return=TRUE,beta0=B0))
+      if(is.null(fin)==FALSE)
+      {
+        break
+      }
+    }
+    if(is.null(fin))
+    {
+      stop("cap_D1_opt: beta could not be estimated for any initial value of gamma.")
+    }
     re<-list(gamma=gamma.est,beta=fin$beta,convergence=fin$convergence)
     if(cov.shrinkage)
     {
@@ -545,11 +716,11 @@ cap_D1_opt<-function(Y,X,method=c("CAP"),cov.shrinkage=FALSE,max.itr=1000,tol=1e
 #################################################
 # second and higher direction
 # CAP.OC: orthogonal constraint
-cap_Dk<-function(Y,X,Phi0=NULL,method=c("CAP"),OC=FALSE,cov.shrinkage=FALSE,max.itr=1000,tol=1e-4,score.return=TRUE,trace=FALSE,gamma0.mat=NULL,ninitial=NULL,seed=500)
+cap_Dk<-function(Y,X,Phi0=NULL,method=c("CAP"),OC=FALSE,cov.shrinkage=FALSE,max.itr=1000,tol=1e-4,score.return=TRUE,trace=FALSE,gamma0.mat=NULL,ninitial=NULL,seed=500,beta0=NULL)
 {
   if(is.null(Phi0))
   {
-    return(cap_D1_opt(Y,X,method=method[1],cov.shrinkage=cov.shrinkage,max.itr=max.itr,tol=tol,trace=trace,score.return=score.return,gamma0.mat=gamma0.mat,ninitial=ninitial,seed=seed))
+    return(cap_D1_opt(Y,X,method=method[1],cov.shrinkage=cov.shrinkage,max.itr=max.itr,tol=tol,trace=trace,score.return=score.return,gamma0.mat=gamma0.mat,ninitial=ninitial,seed=seed,beta0=beta0))
   }else
   {
     n<-length(Y)
@@ -564,11 +735,11 @@ cap_Dk<-function(Y,X,Phi0=NULL,method=c("CAP"),OC=FALSE,cov.shrinkage=FALSE,max.
     }
     
     p0<-ncol(Phi0)
-    # estimate beta0
-    beta0<-rep(NA,p0)
+    # estimate the intercept of each previous direction (beta.int0; named beta0 up to V7)
+    beta.int0<-rep(NA,p0)
     for(j in 1:p0)
     {
-      beta0[j]<-cap_beta(Y,X,gamma=Phi0[,j],cov.shrinkage=cov.shrinkage,max.itr=max.itr,tol=tol,trace=FALSE)$beta[1]
+      beta.int0[j]<-cap_beta(Y,X,gamma=Phi0[,j],cov.shrinkage=cov.shrinkage,max.itr=max.itr,tol=tol,trace=FALSE,beta0=beta0)$beta[1]
     }
     Ytmp<-vector("list",length=n)
     for(i in 1:n)
@@ -585,7 +756,7 @@ cap_Dk<-function(Y,X,Phi0=NULL,method=c("CAP"),OC=FALSE,cov.shrinkage=FALSE,max.
         # Y2tmp.eigen<-eigen(cov(Y2tmp))
         # ev.tmp<-Y2tmp.eigen$values
         # 
-        # ev.new<-c(sqrt(ev.tmp[1:(ntmp-p0)]*ntmp),sqrt(exp(beta0)*ntmp))
+        # ev.new<-c(sqrt(ev.tmp[1:(ntmp-p0)]*ntmp),sqrt(exp(beta.int0)*ntmp))
         # 
         # Ytmp[[i]]<-Y2tmp.svd$u%*%diag(ev.new)%*%t(Y2tmp.eigen$vectors[,1:ntmp])
         #----------------------------------
@@ -598,7 +769,7 @@ cap_Dk<-function(Y,X,Phi0=NULL,method=c("CAP"),OC=FALSE,cov.shrinkage=FALSE,max.
       {
         #----------------------------------
         Y2tmp.svd<-svd(Y2tmp)
-        Ytmp[[i]]<-Y2tmp.svd$u%*%diag(c(Y2tmp.svd$d[1:(p-p0)],sqrt(exp(beta0)*ntmp)))%*%t(Y2tmp.svd$v)
+        Ytmp[[i]]<-Y2tmp.svd$u%*%diag(c(Y2tmp.svd$d[1:(p-p0)],sqrt(exp(beta.int0)*ntmp)))%*%t(Y2tmp.svd$v)
         #----------------------------------
         
         #----------------------------------
@@ -612,12 +783,12 @@ cap_Dk<-function(Y,X,Phi0=NULL,method=c("CAP"),OC=FALSE,cov.shrinkage=FALSE,max.
       if(OC==FALSE)
       {
         re.tmp<-cap_D1_opt(Ytmp,X,method=method[1],cov.shrinkage=cov.shrinkage,
-                           max.itr=max.itr,tol=tol,score.return=score.return,trace=FALSE,gamma0.mat=gamma0.mat,ninitial=ninitial,seed=seed)
+                           max.itr=max.itr,tol=tol,score.return=score.return,trace=FALSE,gamma0.mat=gamma0.mat,ninitial=ninitial,seed=seed,beta0=beta0)
       }
     }else
     {
       re.tmp<-cap_D1_opt(Ytmp,X,method=method[1],cov.shrinkage=cov.shrinkage,
-                         max.itr=max.itr,tol=tol,score.return=score.return,trace=FALSE,gamma0.mat=gamma0.mat,ninitial=ninitial,seed=seed)
+                         max.itr=max.itr,tol=tol,score.return=score.return,trace=FALSE,gamma0.mat=gamma0.mat,ninitial=ninitial,seed=seed,beta0=beta0)
     }
 
     re<-re.tmp
@@ -672,11 +843,13 @@ diag.level<-function(Y,Phi)
 #################################################
 # finding first k directions
 capReg<-function(Y,X,stop.crt=c("nD","DfD"),nD=NULL,DfD.thred=5,method=c("CAP"),OC=FALSE,cov.shrinkage=FALSE,max.itr=1000,tol=1e-4,score.return=TRUE,trace=FALSE,
-                 gamma0.mat=NULL,ninitial=NULL,seed=500,verbose=TRUE)
+                 gamma0.mat=NULL,ninitial=NULL,seed=500,verbose=TRUE,beta0=NULL)
 {
   # Y: outcome list
   # X: covariates
   # stop.crt: stopping criterion, nD=# of directions, DfD=DfD threshold
+  # beta0: initial value(s) of beta for every direction: a vector of length ncol(X), or a matrix with
+  #        ncol(X) rows (one initial value per column); NULL = two, 0 and the V5-V8 start (V9)
 
   if(stop.crt[1]=="nD"&is.null(nD))
   {
@@ -697,7 +870,7 @@ capReg<-function(Y,X,stop.crt=c("nD","DfD"),nD=NULL,DfD.thred=5,method=c("CAP"),
     #--------------------------------------------
     # First direction
     tm1<-system.time(re1<-cap_D1_opt(Y,X,method=method[1],cov.shrinkage=cov.shrinkage,
-                                     max.itr=max.itr,tol=tol,score.return=score.return,trace=FALSE,gamma0.mat=gamma0.mat,ninitial=ninitial,seed=seed))
+                                     max.itr=max.itr,tol=tol,score.return=score.return,trace=FALSE,gamma0.mat=gamma0.mat,ninitial=ninitial,seed=seed,beta0=beta0))
 
     Phi.est<-matrix(re1$gamma,ncol=1)
     beta.est<-matrix(re1$beta,ncol=1)
@@ -735,7 +908,7 @@ capReg<-function(Y,X,stop.crt=c("nD","DfD"),nD=NULL,DfD.thred=5,method=c("CAP"),
         {
           re.tmp<-NULL
           try(tm.tmp<-system.time(re.tmp<-cap_Dk(Y,X,Phi0=Phi.est,method=method,OC=OC,cov.shrinkage=cov.shrinkage,
-                                                 max.itr=max.itr,tol=tol,score.return=score.return,trace=FALSE,gamma0.mat=gamma0.mat,ninitial=ninitial,seed=seed)))
+                                                 max.itr=max.itr,tol=tol,score.return=score.return,trace=FALSE,gamma0.mat=gamma0.mat,ninitial=ninitial,seed=seed,beta0=beta0)))
 
           if(is.null(re.tmp)==FALSE)
           {
@@ -805,7 +978,7 @@ capReg<-function(Y,X,stop.crt=c("nD","DfD"),nD=NULL,DfD.thred=5,method=c("CAP"),
       {
         re.tmp<-NULL
         try(tm.tmp<-system.time(re.tmp<-cap_Dk(Y,X,Phi0=Phi.est,method=method,OC=OC,cov.shrinkage=cov.shrinkage,
-                                               max.itr=max.itr,tol=tol,score.return=score.return,trace=FALSE,gamma0.mat=gamma0.mat,ninitial=ninitial,seed=seed)))
+                                               max.itr=max.itr,tol=tol,score.return=score.return,trace=FALSE,gamma0.mat=gamma0.mat,ninitial=ninitial,seed=seed,beta0=beta0)))
 
         if(is.null(re.tmp)==FALSE)
         {
@@ -896,8 +1069,10 @@ capReg<-function(Y,X,stop.crt=c("nD","DfD"),nD=NULL,DfD.thred=5,method=c("CAP"),
 ###########################################
 # Inference of beta
 # based on bootstrap
-cap_beta_boot<-function(Y,X,gamma=NULL,cov.shrinkage=TRUE,beta=NULL,boot=TRUE,sims=1000,boot.ci.type=c("perc","bca"),conf.level=0.95,max.itr=1000,tol=1e-4,verbose=TRUE)
+cap_beta_boot<-function(Y,X,gamma=NULL,cov.shrinkage=TRUE,beta=NULL,boot=TRUE,sims=1000,boot.ci.type=c("perc","bca"),conf.level=0.95,max.itr=1000,tol=1e-4,verbose=TRUE,beta0=NULL)
 {
+  # beta0: initial value(s) of beta of every bootstrap fit (cap_beta), as capReg; NULL = two, 0 and
+  #        the V5-V8 start (V9); each fit keeps the converged estimate with the lowest objective
   n<-length(Y)
   p<-ncol(Y[[1]])
   Tvec<-rep(NA,n)
@@ -922,7 +1097,8 @@ cap_beta_boot<-function(Y,X,gamma=NULL,cov.shrinkage=TRUE,beta=NULL,boot=TRUE,si
     }else
     {
       beta.boot<-matrix(NA,q,sims)
-      
+
+      B0<-.cap_beta0(q,beta0)
       for(b in 1:sims)
       {
         set.seed(100+b)
@@ -933,7 +1109,7 @@ cap_beta_boot<-function(Y,X,gamma=NULL,cov.shrinkage=TRUE,beta=NULL,boot=TRUE,si
         Xtmp<-matrix(X[idx.tmp,],ncol=q)
         
         re.tmp<-NULL
-        try(re.tmp<-cap_beta(Ytmp,Xtmp,gamma=gamma,cov.shrinkage=cov.shrinkage,max.itr=max.itr,tol=tol,trace=FALSE,score.return=FALSE))
+        try(re.tmp<-cap_beta(Ytmp,Xtmp,gamma=gamma,cov.shrinkage=cov.shrinkage,max.itr=max.itr,tol=tol,trace=FALSE,score.return=FALSE,beta0=B0))
         if(is.null(re.tmp)==FALSE)
         {
           if(re.tmp$convergence==TRUE)

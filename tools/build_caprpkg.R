@@ -2,6 +2,13 @@
 # - copies the 7 C++ kernels into src/ (unique filenames)
 # - strips each method's kernel-loader/dependency block into inst/method/
 # - generates src/init.c (native-routine registration)
+#
+# 0.2.0 (2026-11-23): sources = HDCAP/V9, LCAP_gamma-invar/V7, LCAP_gamma-var/V5,
+# CAP-CoC/V4, CAP-mediation/V5, CAP-HDcov/V3, CAP-clustering/V5.  These name their
+# kernel in every .Call (PACKAGE = .<prefix>_vN_dll, set by a local({...}) block
+# that builds/dyn.loads the folder's kernel); here that block becomes
+# .<prefix>_vN_dll <- "CAPmethods", so every .Call resolves to the routines
+# registered in the package DLL.
 
 ROOT <- "/Users/yz125/Dropbox/MyFolder/Biostat-IU/Projects/cap/code"
 PKG  <- file.path(ROOT, "CAP-Rpkg", "260605", "CAPmethods")
@@ -13,13 +20,13 @@ dir.create(file.path(PKG, "man"),         recursive = TRUE, showWarnings = FALSE
 
 ## ---- 1. kernels -> src/ (unique names) -------------------------------------
 kernels <- c(
-  "HDCAP/V7/cap_kernels.cpp"            = "src/hd_kernels.cpp",
-  "LCAP_gamma-invar/V6/cap_kernels.cpp"= "src/lcap_kernels.cpp",
-  "LCAP_gamma-var/V4/mlcap_kernels.cpp"= "src/mlcap_kernels.cpp",
-  "CAP-CoC/V3/coc_kernels.cpp"         = "src/coc_kernels.cpp",
-  "CAP-mediation/V4/med_kernels.cpp"   = "src/med_kernels.cpp",
-  "CAP-HDcov/V2/hdcov_kernels.cpp"     = "src/hdcov_kernels.cpp",
-  "CAP-clustering/V4/cluster_kernels.cpp" = "src/cluster_kernels.cpp"
+  "HDCAP/V9/cap_kernels.cpp"            = "src/hd_kernels.cpp",
+  "LCAP_gamma-invar/V7/cap_kernels.cpp"= "src/lcap_kernels.cpp",
+  "LCAP_gamma-var/V5/mlcap_kernels.cpp"= "src/mlcap_kernels.cpp",
+  "CAP-CoC/V4/coc_kernels.cpp"         = "src/coc_kernels.cpp",
+  "CAP-mediation/V5/med_kernels.cpp"   = "src/med_kernels.cpp",
+  "CAP-HDcov/V3/hdcov_kernels.cpp"     = "src/hdcov_kernels.cpp",
+  "CAP-clustering/V5/cluster_kernels.cpp" = "src/cluster_kernels.cpp"
 )
 for (s in names(kernels))
   file.copy(file.path(ROOT, s), file.path(PKG, kernels[[s]]), overwrite = TRUE)
@@ -60,29 +67,59 @@ strip_loader <- function(lines, extra_block_re = character()) {
   lines[!remove]
 }
 
+# Replace each ".<prefix>_vN_dll <- local({...})" block (the folder version's
+# kernel build + dyn.load, whose value names the loaded DLL) by
+# ".<prefix>_vN_dll <- \"CAPmethods\"": in the package the kernels are the
+# routines registered in the package DLL.  Brace-matched, as strip_loader.
+replace_dll_block <- function(lines) {
+  re <- "^(\\.[A-Za-z]+_v[0-9]+_dll)\\s*<-\\s*local\\(\\{"
+  count <- function(s, ch) sum(gregexpr(ch, s, fixed = TRUE)[[1]] > 0)
+  repeat {
+    s <- grep(re, lines)[1]
+    if (is.na(s)) break
+    var <- sub(paste0(re, ".*$"), "\\1", lines[s])
+    depth <- 0L; i <- s
+    repeat {
+      depth <- depth + count(lines[i], "{") - count(lines[i], "}")
+      if (depth <= 0L) break
+      i <- i + 1L
+      if (i > length(lines)) stop("unbalanced braces after ", var)
+    }
+    new <- c(sprintf("%s <- \"CAPmethods\"   # CAPmethods: the kernels are registered in the package DLL", var))
+    lines <- c(lines[seq_len(s - 1L)], new, lines[-seq_len(i)])
+  }
+  lines
+}
+
 methods <- list(
-  list(src = "HDCAP/V7/CAP_HD.R",                       dst = "hdcap.R"),
-  list(src = "LCAP_gamma-invar/V6/Longitudinal_HDCAP.R",dst = "lcap.R"),
-  list(src = "LCAP_gamma-var/V4/LCAP_varGamma.R",       dst = "mcap.R",
-       extra = "if\\s*\\(\\s*requireNamespace\\(\"Rfast\""),
-  list(src = "CAP-CoC/V3/COCReg.R",                     dst = "coc.R"),
-  list(src = "CAP-mediation/V4/CAPMediation.R",         dst = "mediation.R"),
-  list(src = "CAP-HDcov/V2/HCAP_Code.R",                dst = "hdcov.R"),
-  list(src = "CAP-clustering/V4/CAP_Cluster.R",         dst = "cluster.R")
+  list(src = "HDCAP/V9/CAP_HD.R",                       dst = "hdcap.R"),
+  list(src = "LCAP_gamma-invar/V7/Longitudinal_HDCAP.R",dst = "lcap.R"),
+  # MCAP: drop the sampler choice (Rfast::rvmf or the bundled file); the package
+  # always sources the bundled rvmf_function.R into the mcap env (zzz.R)
+  list(src = "LCAP_gamma-var/V5/LCAP_varGamma.R",       dst = "mcap.R",
+       extra = "^if\\s*\\(identical\\(getOption\\(\"mlcap\\.rvmf\"\\)"),
+  list(src = "CAP-CoC/V4/COCReg.R",                     dst = "coc.R"),
+  list(src = "CAP-mediation/V5/CAPMediation.R",         dst = "mediation.R"),
+  list(src = "CAP-HDcov/V3/HCAP_Code.R",                dst = "hdcov.R"),
+  list(src = "CAP-clustering/V5/CAP_Cluster.R",         dst = "cluster.R")
 )
 for (m in methods) {
   L <- readLines(file.path(ROOT, m$src), warn = FALSE)
-  out <- strip_loader(L, if (!is.null(m$extra)) m$extra else character())
+  out <- replace_dll_block(L)
+  out <- strip_loader(out, if (!is.null(m$extra)) m$extra else character())
+  left <- grep("dyn\\.load|build_kernels|getLoadedDLLs|_dir\\(\\)|is\\.loaded|requireNamespace\\(\"Rfast\"", out, value = TRUE)
+  left <- left[!grepl("^\\s*#", left)]
+  if (length(left)) stop(m$dst, ": loader code left after stripping:\n", paste(left, collapse = "\n"))
   writeLines(out, file.path(PKG, "inst", "method", m$dst))
   cat(sprintf("  %-12s %4d -> %4d lines\n", m$dst, length(L), length(out)))
 }
 # MCAP's vMF sampler, sourced into the mcap env before mcap.R
-file.copy(file.path(ROOT, "LCAP_gamma-var/V4/rvmf_function.R"),
+file.copy(file.path(ROOT, "LCAP_gamma-var/V5/rvmf_function.R"),
           file.path(PKG, "inst", "method", "rvmf_function.R"), overwrite = TRUE)
 
 ## ---- 3. generate src/init.c (native routine registration) ------------------
 routines <- c(
-  hd_covls_cpp=1, hd_score_cpp=2, hd_capbeta_cpp=8, hd_capd1_cpp=9, hd_objfunc_cpp=5,
+  hd_covls_cpp=1, hd_score_cpp=2, hd_capbeta_cpp=8, hd_capd1_cpp=9, hd_objfunc_cpp=6,
   lcap_covls_cpp=1, lcap_gammasolve_cpp=2, lcap_score_cpp=2, lcap_recar_cpp=16,
   lcap_capd1_cpp=15, lcap_objfunc_cpp=12,
   mlcap_compute_scores_cpp=3, mlcap_obj_func_cpp=15,

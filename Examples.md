@@ -254,5 +254,9 @@ direction D2); the right panel shows the two covariance regimes capPCL separates
   errors / CIs for the coefficients; pass `sims =` to set the number of replicates.
 - **Direction selection.** Most fits accept `stop.crt = "nD"` (fix the number of
   directions via `nD`) or `stop.crt = "DfD"` (data-driven via a `DfD.thred`).
+- **Initial values.** `ninitial` sets the number of initial directions; `hdcap()`
+  and `coc()` also take `beta0`, the initial value(s) of β (default: two, `0` and
+  `c(0, rnorm(q - 1, 1, 1))` under `set.seed(100)`; one value, e.g.
+  `beta0 = rep(0, ncol(X))`, runs a single start).
 - **Any internal function** of a method is reachable with
   `cap_internal("<method>", "<fn>")` — e.g. `cap_internal("coc", "COCReg.D1")`.

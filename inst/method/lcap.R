@@ -8,14 +8,40 @@
 # (cap_D1 / cap.cov_D1), and the objective -- call a compiled kernel via .Call().
 # trace=TRUE diagnostics are not provided by the kernel path (the website never
 # uses them). See LCAP_gamma-invar/README.md.
+#
+# V7 (see LCAP_gamma-invar/README.md): the changes of HDCAP V8 and V9 that apply
+# to LCAP.  The estimator, the objective and the results are those of V6:
+# - The objective that chooses among the initial values of gamma (obj.func, the
+#   h-likelihood) is already the function the fit minimizes, with the
+#   covariances of the fit: the sample covariances without shrinkage; with
+#   shrinkage the shrunk covariances of cov.ls.const at the fit's random effects
+#   (the covariances cap_beta / cap_D1 iterate on) -- the point of HDCAP V9 (1).
+# - The initial value of beta is the per-subject lm fit of the log scores at the
+#   initial gamma (data-driven), not a fixed vector, so HDCAP V9 (2) (several
+#   initial values of beta) does not apply.
+# - As HDCAP V8: the kernel no longer aborts R on a failed iteration (an R error,
+#   caught by try()), one kernel per R version and architecture
+#   (build_kernels.R), every .Call names the V7 kernel, the folder is found from
+#   the file source() reads, and cap_D1_opt / cap.cov_D1_opt compute the beta fit
+#   and the objective of an initial value in one try() (V6 kept the beta.tmp of
+#   the previous initial value when this one's fit failed, and stopped when the
+#   first one failed) and stop with a clear error when no initial value gives an
+#   estimate.
 #################################################
 
 
 #################################################
 # Load the compiled kernel (cap_kernels.cpp -> shared object), building it once
-# if necessary. Set option "lcap.v6.dir" or variable LCAP_V6_DIR to point at the
-# folder containing cap_kernels.cpp; defaults to "LCAP_gamma-invar/V6".
+# if necessary.  The kernel file is named after the R version and architecture
+# (cap_kernels_lcap_v7-R<major.minor>-<arch>.so, see build_kernels.R), so that
+# machines sharing this folder with different R versions each load their own build.
+# The folder: option "lcap.v7.dir" or variable LCAP_V7_DIR if set, else the folder
+# of this file when it is read with source(), else "LCAP_gamma-invar/V7", "V7" or ".".
 
+# .lcap_v7_dll: name of the loaded V7 kernel; every .Call() names it (PACKAGE), so
+# that a V6 kernel loaded in the same session (same symbol names, but one that
+# aborts R on a failed iteration) is never used by mistake
+.lcap_v7_dll <- "CAPmethods"   # CAPmethods: the kernels are registered in the package DLL
 
 # ---- helpers: flatten ragged longitudinal data for the kernels --------------
 # X (list of nV_i x q) -> stacked matrix; Tvec/vcount track the subject blocks.
@@ -29,7 +55,7 @@
 {
   unlist(lapply(S.iv, function(a) {
     cube <- if (length(dim(a)) == 3) a else array(a, c(nrow(a), ncol(a), 1))
-    as.numeric(.Call("lcap_score_cpp", cube, as.numeric(gamma)))
+    as.numeric(.Call("lcap_score_cpp", cube, as.numeric(gamma),PACKAGE=.lcap_v7_dll))
   }), use.names = FALSE)
 }
 # stack a list of p x p x nV arrays into one p x p x M cube
@@ -87,7 +113,7 @@
   res <- .Call("lcap_recar_cpp", scoreflat, scoreflat, sum(gamma^2), fx$X, Tflat,
                fx$vcount, FALSE, as.integer(n), as.integer(q), init$beta0.vec,
                init$beta1.mat, init$beta, init$sigma2, init$Omega,
-               as.integer(max.itr), tol)
+               as.integer(max.itr), tol,PACKAGE=.lcap_v7_dll)
   beta1.mat.new <- matrix(res$beta1mat, n, q - 1); colnames(beta1.mat.new) <- colnames(X[[1]])[-1]
   Omega.new <- if (q - 1 == 1) as.matrix(res$OmegaDiag) else diag(as.numeric(res$OmegaDiag))
   colnames(Omega.new) = rownames(Omega.new) <- colnames(X[[1]])[-1]
@@ -129,7 +155,7 @@
   fx <- .lcap_flatX(X)
   res <- .Call("lcap_capd1_cpp", cube, H, fx$X, Tflat, fx$vcount, as.integer(n),
                as.integer(q), as.numeric(gamma0), init$beta0.vec, init$beta1.mat,
-               init$beta, init$sigma2, init$Omega, as.integer(max.itr), tol)
+               init$beta, init$sigma2, init$Omega, as.integer(max.itr), tol,PACKAGE=.lcap_v7_dll)
   g <- as.numeric(res$gamma); g <- g / sqrt(sum(g^2))
   if (g[which.max(abs(g))] < 0) g <- -g
   bo <- reest(g)
@@ -180,7 +206,7 @@ norm.F.std<-function(A1,A2=NULL)
 cov.ls<-function(Y)
 {
   # Y: data  (linear (Ledoit-Wolf) shrinkage covariance; RcppArmadillo kernel)
-  matrix(.Call("lcap_covls_cpp", as.matrix(Y)), nrow = ncol(Y))
+  matrix(.Call("lcap_covls_cpp", as.matrix(Y),PACKAGE=.lcap_v7_dll), nrow = ncol(Y))
 }
 #################################################
 
@@ -619,7 +645,7 @@ cap_beta<-function(Y,X,gamma,cov.shrinkage=TRUE,cov.beta.diag=TRUE,max.itr=1000,
 gamma.solve<-function(A,H)
 {
   # generalized smallest-eigenvalue eigenvector of A w.r.t. H (RcppArmadillo kernel)
-  as.numeric(.Call("lcap_gammasolve_cpp", as.matrix(A), as.matrix(H)))
+  as.numeric(.Call("lcap_gammasolve_cpp", as.matrix(A), as.matrix(H),PACKAGE=.lcap_v7_dll))
 }
 
 # estimate both gamma and beta
@@ -1090,13 +1116,22 @@ cap.cov_D1_opt<-function(Y.cov,X,Y.n,method=c("CAP"),cov.beta.diag=TRUE,max.itr=
       if(is.null(re.tmp[[kk]])==FALSE)
       {
         #--------------------------------
+        # V7: the beta fit and the objective of this initial value in one try() (V6 kept
+        # the beta.tmp of the previous initial value when this one's fit failed): when
+        # they cannot be computed, obj[kk] stays NA and this initial value is not used
         gamma.unscale<-re.tmp[[kk]]$gamma/sqrt(t(re.tmp[[kk]]$gamma)%*%H%*%re.tmp[[kk]]$gamma)[1,1]
-        try(beta.tmp<-cap.cov_beta(Y.cov,X,Y.n,gamma.unscale,cov.beta.diag=cov.beta.diag,max.itr=max.itr,tol=tol,trace=FALSE,score.return=FALSE))
-        try(obj[kk]<-obj.func(X,nT,Y.cov,gamma.unscale,beta.tmp$beta0.random,beta.tmp$beta[1],beta.tmp$beta0.sigma2,beta.tmp$beta1.random,beta.tmp$beta[-1],beta.tmp$beta1.Omega))
+        try({
+          beta.tmp<-cap.cov_beta(Y.cov,X,Y.n,gamma.unscale,cov.beta.diag=cov.beta.diag,max.itr=max.itr,tol=tol,trace=FALSE,score.return=FALSE)
+          obj[kk]<-obj.func(X,nT,Y.cov,gamma.unscale,beta.tmp$beta0.random,beta.tmp$beta[1],beta.tmp$beta0.sigma2,beta.tmp$beta1.random,beta.tmp$beta[-1],beta.tmp$beta1.Omega)
+        })
         #--------------------------------
       }
     }
     opt.idx<-which.min(obj)
+    if(length(opt.idx)==0)
+    {
+      stop("cap.cov_D1_opt: no initial value of gamma gave an estimate.")
+    }
     re<-re.tmp[[opt.idx]]
   }
   #============================================
@@ -1206,22 +1241,34 @@ cap_D1_opt<-function(Y,X,method=c("CAP"),cov.shrinkage=TRUE,cov.beta.diag=TRUE,m
       if(is.null(re.tmp[[kk]])==FALSE)
       {
         #--------------------------------
+        # objective (the h-likelihood) with the covariances of the fit: with shrinkage the
+        # shrunk covariances of cov.ls.const at the fitted random effects, else the sample ones.
+        # V7: the beta fit, the shrunk covariances and the objective of this initial value in
+        # one try() (V6 kept the beta.tmp of the previous initial value when this one's fit
+        # failed, and the error of cov.ls.const stopped cap_D1_opt): when they cannot be
+        # computed, obj[kk] stays NA and this initial value is not used
         gamma.unscale<-re.tmp[[kk]]$gamma/sqrt(t(re.tmp[[kk]]$gamma)%*%H%*%re.tmp[[kk]]$gamma)[1,1]
-        try(beta.tmp<-cap_beta(Y,X,gamma.unscale,cov.shrinkage=cov.shrinkage,cov.beta.diag=cov.beta.diag,max.itr=max.itr,tol=tol,trace=FALSE,score.return=FALSE))
-        if(cov.shrinkage)
-        {
-          cov.est<-cov.ls.const(Y,X,gamma.unscale,beta.tmp$beta0.random,beta.tmp$beta1.random)
-          try(obj[kk]<-obj.func(X,nT,Sigma=cov.est$S,gamma=gamma.unscale,beta0.vec=beta.tmp$beta0.random,beta0=beta.tmp$beta[1],sigma2=beta.tmp$beta0.sigma2,
-                                beta1.mat=beta.tmp$beta1.random,beta1=beta.tmp$beta[-1],Omega=beta.tmp$beta1.Omega))
-        }else
-        {
-          try(obj[kk]<-obj.func(X,nT,Sigma=S.iv,gamma=gamma.unscale,beta0.vec=beta.tmp$beta0.random,beta0=beta.tmp$beta[1],sigma2=beta.tmp$beta0.sigma2,
-                                beta1.mat=beta.tmp$beta1.random,beta1=beta.tmp$beta[-1],Omega=beta.tmp$beta1.Omega))
-        }
+        try({
+          beta.tmp<-cap_beta(Y,X,gamma.unscale,cov.shrinkage=cov.shrinkage,cov.beta.diag=cov.beta.diag,max.itr=max.itr,tol=tol,trace=FALSE,score.return=FALSE)
+          if(cov.shrinkage)
+          {
+            cov.est<-cov.ls.const(Y,X,gamma.unscale,beta.tmp$beta0.random,beta.tmp$beta1.random)
+            obj[kk]<-obj.func(X,nT,Sigma=cov.est$S,gamma=gamma.unscale,beta0.vec=beta.tmp$beta0.random,beta0=beta.tmp$beta[1],sigma2=beta.tmp$beta0.sigma2,
+                              beta1.mat=beta.tmp$beta1.random,beta1=beta.tmp$beta[-1],Omega=beta.tmp$beta1.Omega)
+          }else
+          {
+            obj[kk]<-obj.func(X,nT,Sigma=S.iv,gamma=gamma.unscale,beta0.vec=beta.tmp$beta0.random,beta0=beta.tmp$beta[1],sigma2=beta.tmp$beta0.sigma2,
+                              beta1.mat=beta.tmp$beta1.random,beta1=beta.tmp$beta[-1],Omega=beta.tmp$beta1.Omega)
+          }
+        })
         #--------------------------------
       }
     }
     opt.idx<-which.min(obj)
+    if(length(opt.idx)==0)
+    {
+      stop("cap_D1_opt: no initial value of gamma gave an estimate.")
+    }
     re<-re.tmp[[opt.idx]]
   }
   #============================================

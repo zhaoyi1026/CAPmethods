@@ -7,16 +7,48 @@
 # (mlcap_kernels.cpp) is built once to a shared object by build_kernels.R and
 # loaded via dyn.load() + .Call() -- no compiler is needed to *run*, only to
 # build. See LCAP_gamma-var/README.md.
+#
+# V5 (see LCAP_gamma-var/README.md): the changes of HDCAP V8 and V9 that apply
+# to MCAP.  The estimator, the objective and the results are those of V4:
+# - The objective that chooses among the initial values of gamma (obj.func, the
+#   hierarchical likelihood with the von Mises-Fisher term) is already the
+#   function the block coordinate descent minimizes, with the covariances it
+#   uses (MCAP has no covariance shrinkage) -- the point of HDCAP V9 (1).
+# - The initial values of the coefficients come from an lme fit of the log
+#   scores at the initial gamma (data-driven), not a fixed vector, so HDCAP V9
+#   (2) (several initial values of beta) does not apply.
+# - As HDCAP V8: the kernel raises an R error after its C++ handler finishes
+#   (BEGIN_RCPP/END_RCPP), one kernel per R version and architecture
+#   (build_kernels.R), every .Call names the V5 kernel, the folder is found from
+#   the file source() reads, and the *.opt functions compute the objective of an
+#   initial value in try() (in V4 an error there stopped the whole search; now
+#   that initial value is not used).
+# - Reproducibility: the von Mises-Fisher draws (random cluster directions of
+#   each initial value) use the bundled sampler by default.  V3/V4 used
+#   Rfast::rvmf whenever Rfast was installed, and with Rfast 2.1.5 its draws do
+#   not follow set.seed(), so the same call gave different fits from run to run.
+#   options(mlcap.rvmf = "Rfast") restores Rfast's sampler.
 #################################################
 
 
 #################################################
-# Locate this folder (holds mlcap_kernels.cpp / rvmf_function.R). Set option
-# "mlcap.v4.dir" or variable MLCAP_V4_DIR to override; defaults to a search.
+# Locate this folder (holds mlcap_kernels.cpp / rvmf_function.R): option
+# "mlcap.v5.dir" or variable MLCAP_V5_DIR if set, else the folder of this file
+# when it is read with source(), else "LCAP_gamma-var/V5", "V5" or ".".
 
-# von Mises-Fisher sampler: use Rfast if available, else the bundled fallback.
+# von Mises-Fisher sampler.  V5: the bundled sampler (rvmf_function.R, Rfast's
+# algorithm in R, drawing from R's random number generator) by default, so that a
+# fit is reproducible with set.seed() (the sampler of the CAPmethods package and the
+# website).  options(mlcap.rvmf = "Rfast") uses Rfast::rvmf, as V3/V4 did whenever
+# Rfast was installed; its draws do not follow set.seed() (Rfast 2.1.5 draws from
+# its own generator), so two runs of the same call can give different fits.
 
-# Load the compiled kernel (build once if missing).
+# Load the compiled kernel (build once if missing).  The kernel file is named after
+# the R version and architecture (mlcap_kernels_v5-R<major.minor>-<arch>.so, see
+# build_kernels.R).  .mlcap_v5_dll: name of the loaded V5 kernel; every .Call()
+# names it (PACKAGE), so that a V4 kernel loaded in the same session (same symbol
+# names) is never used by mistake.
+.mlcap_v5_dll <- "CAPmethods"   # CAPmethods: the kernels are registered in the package DLL
 #################################################
 
 ###########################################
@@ -65,7 +97,7 @@ space_sim<-function(M1,M2,thred=1e-2)
 compute.scores<-function(Y.cov,gamma.rnd)
 {
   nvec<-sapply(Y.cov,function(x){return(dim(x)[[3]])})
-  .Call("mlcap_compute_scores_cpp",Y.cov,gamma.rnd,as.integer(nvec))
+  .Call("mlcap_compute_scores_cpp",Y.cov,gamma.rnd,as.integer(nvec),PACKAGE=.mlcap_v5_dll)
 }
 
 #################################################
@@ -73,8 +105,8 @@ compute.scores<-function(Y.cov,gamma.rnd)
 obj.func<-function(X1=NULL,X2=NULL,Tmat,Sigma,gamma.rnd,gamma,kappa,beta0.rnd,beta1=NULL,beta2.rnd=NULL,beta0,beta2=NULL,sigma2,Omega=NULL)
 {
   nvec<-as.integer(sapply(Sigma,function(x){return(dim(x)[[3]])}))
-  score<-.Call("mlcap_compute_scores_cpp",Sigma,gamma.rnd,nvec)
-  .Call("mlcap_obj_func_cpp",X1,X2,Tmat,score,gamma.rnd,gamma,kappa,beta0.rnd,beta1,beta2.rnd,beta0,beta2,sigma2,Omega,nvec)
+  score<-.Call("mlcap_compute_scores_cpp",Sigma,gamma.rnd,nvec,PACKAGE=.mlcap_v5_dll)
+  .Call("mlcap_obj_func_cpp",X1,X2,Tmat,score,gamma.rnd,gamma,kappa,beta0.rnd,beta1,beta2.rnd,beta0,beta2,sigma2,Omega,nvec,PACKAGE=.mlcap_v5_dll)
 }
 #################################################
 
@@ -1311,8 +1343,8 @@ lcap.cov.D1.fix.opt<-function(Y.cov,X1,Tmat,method=c("CAP"),H.type=c("CAvgCov","
       {
         if(re.tmp[[kk]]$convergence==TRUE)
         {
-          obj[kk]<-obj.func(X1=X1,Tmat=Tmat,Sigma=Y.cov,gamma.rnd=re.tmp[[kk]]$gamma.rnd,gamma=re.tmp[[kk]]$gamma,kappa=re.tmp[[kk]]$kappa,
-                            beta0.rnd=re.tmp[[kk]]$beta0.rnd,beta1=re.tmp[[kk]]$beta[2:(q1+1)],beta0=re.tmp[[kk]]$beta[1],sigma2=re.tmp[[kk]]$beta0.sigma2)
+          try(obj[kk]<-obj.func(X1=X1,Tmat=Tmat,Sigma=Y.cov,gamma.rnd=re.tmp[[kk]]$gamma.rnd,gamma=re.tmp[[kk]]$gamma,kappa=re.tmp[[kk]]$kappa,
+                            beta0.rnd=re.tmp[[kk]]$beta0.rnd,beta1=re.tmp[[kk]]$beta[2:(q1+1)],beta0=re.tmp[[kk]]$beta[1],sigma2=re.tmp[[kk]]$beta0.sigma2))
         }
       }
     }
@@ -1756,9 +1788,9 @@ lcap.cov.D1.rnd.opt<-function(Y.cov,X2,Tmat,method=c("CAP"),H.type=c("CAvgCov","
       {
         if(re.tmp[[kk]]$convergence==TRUE)
         {
-          obj[kk]<-obj.func(X2=X2,Tmat=Tmat,Sigma=Y.cov,gamma.rnd=re.tmp[[kk]]$gamma.rnd,gamma=re.tmp[[kk]]$gamma,kappa=re.tmp[[kk]]$kappa,
+          try(obj[kk]<-obj.func(X2=X2,Tmat=Tmat,Sigma=Y.cov,gamma.rnd=re.tmp[[kk]]$gamma.rnd,gamma=re.tmp[[kk]]$gamma,kappa=re.tmp[[kk]]$kappa,
                             beta0.rnd=re.tmp[[kk]]$beta0.rnd,beta2.rnd=re.tmp[[kk]]$beta2.rnd,beta0=re.tmp[[kk]]$beta[1],beta2=re.tmp[[kk]]$beta[(q1+1+1):q],
-                            sigma2=re.tmp[[kk]]$beta0.sigma2,Omega=re.tmp[[kk]]$beta2.Omega)
+                            sigma2=re.tmp[[kk]]$beta0.sigma2,Omega=re.tmp[[kk]]$beta2.Omega))
         }
       }
     }
@@ -2296,9 +2328,9 @@ lcap.cov.D1.mix.opt<-function(Y.cov,X1,X2,Tmat,method=c("CAP"),H.type=c("CAvgCov
       {
         if(re.tmp[[kk]]$convergence==TRUE)
         {
-          obj[kk]<-obj.func(X1=X1,X2=X2,Tmat=Tmat,Sigma=Y.cov,gamma.rnd=re.tmp[[kk]]$gamma.rnd,gamma=re.tmp[[kk]]$gamma,kappa=re.tmp[[kk]]$kappa,
+          try(obj[kk]<-obj.func(X1=X1,X2=X2,Tmat=Tmat,Sigma=Y.cov,gamma.rnd=re.tmp[[kk]]$gamma.rnd,gamma=re.tmp[[kk]]$gamma,kappa=re.tmp[[kk]]$kappa,
                             beta0.rnd=re.tmp[[kk]]$beta0.rnd,beta1=re.tmp[[kk]]$beta[2:(q1+1)],beta2.rnd=re.tmp[[kk]]$beta2.rnd,beta0=re.tmp[[kk]]$beta[1],beta2=re.tmp[[kk]]$beta[(q1+1+1):q],
-                            sigma2=re.tmp[[kk]]$beta0.sigma2,Omega=re.tmp[[kk]]$beta2.Omega)
+                            sigma2=re.tmp[[kk]]$beta0.sigma2,Omega=re.tmp[[kk]]$beta2.Omega))
         }
       }
     }

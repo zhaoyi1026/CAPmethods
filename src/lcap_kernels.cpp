@@ -21,6 +21,15 @@
 // MASS::ginv reduces to reciprocal-or-zero with threshold sqrt(eps)*max(diag) --
 // replicated exactly here. Symbols are lcap_-prefixed to avoid colliding with the
 // CAP/V6 (score_cpp/...) and HDCAP/V7 (hd_*) kernels loaded in the same process.
+//
+// LCAP/V7: the kernels of V6, unchanged, except that each .Call entry point is
+// wrapped in BEGIN_RCPP / END_RCPP (as HDCAP V8).  In V6 a C++ exception (e.g.
+// solve() on a singular random-effects system, or eig_sym() on a non-finite
+// matrix when an iteration diverges) crossed the extern "C" boundary uncaught
+// and aborted the R process; now it is an ordinary R error, which the try()
+// calls of Longitudinal_HDCAP.R catch (a failed initial value or bootstrap draw
+// is skipped).  Longitudinal_HDCAP.R names the V7 kernel in every .Call
+// (PACKAGE), so a V6 kernel loaded in the same session is never used.
 // =============================================================================
 #include <RcppArmadillo.h>
 using namespace arma;
@@ -302,21 +311,28 @@ static double obj_core(const vec& score, const mat& X, const vec& Tvec,
 
 // ============================ extern "C" wrappers =============================
 extern "C" SEXP lcap_covls_cpp(SEXP Y_) {
+BEGIN_RCPP
   return wrap(cov_ls_core(as<mat>(Y_)));
+END_RCPP
 }
 
 extern "C" SEXP lcap_gammasolve_cpp(SEXP A_, SEXP H_) {
+BEGIN_RCPP
   return wrap(gamma_solve_core(as<mat>(A_), as<mat>(H_)));
+END_RCPP
 }
 
 extern "C" SEXP lcap_score_cpp(SEXP Sig_, SEXP gamma_) {
+BEGIN_RCPP
   return wrap(score_core(as<cube>(Sig_), as<vec>(gamma_)));
+END_RCPP
 }
 
 extern "C" SEXP lcap_recar_cpp(SEXP scoreWork_, SEXP scoreRaw_, SEXP gg_, SEXP X_,
                                SEXP Tvec_, SEXP vcount_, SEXP shrink_, SEXP n_,
                                SEXP q_, SEXP beta0vec_, SEXP beta1mat_, SEXP beta_,
                                SEXP sigma2_, SEXP OmegaDiag_, SEXP maxitr_, SEXP tol_) {
+BEGIN_RCPP
   vec scoreWork = as<vec>(scoreWork_), scoreRaw = as<vec>(scoreRaw_);
   double gg = as<double>(gg_);
   mat X = as<mat>(X_); vec Tvec = as<vec>(Tvec_); ivec vcount = as<ivec>(vcount_);
@@ -332,12 +348,14 @@ extern "C" SEXP lcap_recar_cpp(SEXP scoreWork_, SEXP scoreRaw_, SEXP gg_, SEXP X
   return wrap(List::create(_["beta"] = beta, _["beta0vec"] = beta0vec,
                            _["beta1mat"] = beta1mat, _["sigma2"] = sigma2,
                            _["OmegaDiag"] = OmegaDiag, _["iter"] = iter));
+END_RCPP
 }
 
 extern "C" SEXP lcap_capd1_cpp(SEXP Sig_, SEXP H_, SEXP X_, SEXP Tvec_, SEXP vcount_,
                                SEXP n_, SEXP q_, SEXP gamma0_, SEXP beta0vec_,
                                SEXP beta1mat_, SEXP beta_, SEXP sigma2_,
                                SEXP OmegaDiag_, SEXP maxitr_, SEXP tol_) {
+BEGIN_RCPP
   cube Sig = as<cube>(Sig_); mat H = as<mat>(H_); mat X = as<mat>(X_);
   vec Tvec = as<vec>(Tvec_); ivec vcount = as<ivec>(vcount_);
   uword n = as<uword>(n_), q = as<uword>(q_);
@@ -348,11 +366,13 @@ extern "C" SEXP lcap_capd1_cpp(SEXP Sig_, SEXP H_, SEXP X_, SEXP Tvec_, SEXP vco
   vec g = capd1_core(Sig, H, X, Tvec, vcount, n, q, gamma, beta0vec, beta1mat,
                      beta, sigma2, OmegaDiag, as<int>(maxitr_), as<double>(tol_), iter);
   return wrap(List::create(_["gamma"] = g, _["iter"] = iter));
+END_RCPP
 }
 
 extern "C" SEXP lcap_objfunc_cpp(SEXP score_, SEXP X_, SEXP Tvec_, SEXP vcount_,
                                  SEXP n_, SEXP q_, SEXP beta0vec_, SEXP beta1mat_,
                                  SEXP beta0_, SEXP beta1_, SEXP sigma2_, SEXP OmegaDiag_) {
+BEGIN_RCPP
   vec score = as<vec>(score_); mat X = as<mat>(X_); vec Tvec = as<vec>(Tvec_);
   ivec vcount = as<ivec>(vcount_); uword n = as<uword>(n_), q = as<uword>(q_);
   vec beta0vec = as<vec>(beta0vec_); mat beta1mat = as<mat>(beta1mat_);
@@ -360,4 +380,5 @@ extern "C" SEXP lcap_objfunc_cpp(SEXP score_, SEXP X_, SEXP Tvec_, SEXP vcount_,
   double sigma2 = as<double>(sigma2_); vec OmegaDiag = as<vec>(OmegaDiag_);
   return wrap(obj_core(score, X, Tvec, vcount, beta0vec, beta1mat, beta0, beta1,
                        sigma2, OmegaDiag, n, q));
+END_RCPP
 }

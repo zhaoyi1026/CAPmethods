@@ -6,21 +6,54 @@
 # kernel. The method's cost is dominated by the high-dimensional cv.glmnet / glm
 # fitting, which stays in R, so the end-to-end speedup is small unless the
 # response dimension p is large. See CAP-HDcov/README.md.
+#
+# V3 (see CAP-HDcov/README.md): the changes of HDCAP V8 and V9 that apply to
+# CAP-HDcov.
+# (1) The objective that chooses among the initial values of gamma
+#     (MatReg_QC_opt), argument obj.scale of MatReg_QC_opt, MatReg_QC_opt2, capReg
+#     and run_HCAP_pipeline.  obj.scale = TRUE (default, as V2): the objective
+#     sum_i T_i (x_i'beta + gamma'Sigma_i gamma exp(-x_i'beta)) / 2 at gamma scaled to
+#     unit length, beta refitted.  With an intercept, rescaling gamma by c adds
+#     (sum_i T_i) log c to the objective, so this equals the objective at
+#     gamma'H gamma = 1 plus (sum_i T_i / 2) log(gamma'H gamma): it favours
+#     directions of low average variance, and is not the function the iteration
+#     minimizes.  obj.scale = FALSE (HDCAP V9): the function the fit minimizes,
+#     with its constraint, at the fit's gamma scaled to gamma'H gamma = 1
+#     (H = mean_i Sigma_i, the gamma step of MatReg_QC) and the fit's beta.  The
+#     default is V2's because on the package example FALSE estimates the first
+#     direction better by the objective but then loses the second one (see
+#     CAP-HDcov/README.md).  The returned estimate has the same form either way
+#     (unit-length gamma, beta refitted).
+# (2) The beta step is a Gamma-family lasso (cv.glmnet), whose fit does not
+#     start from an initial value of beta, so HDCAP V9 (2) (several initial
+#     values of beta) does not apply.
+# (3) As HDCAP V8: the kernel no longer aborts R on a failed call (an R error),
+#     one kernel per R version and architecture (build_kernels.R), every .Call
+#     names the V3 kernel, and the folder is found from the file source() reads.
+#     Also: capReg (stop.crt = "DfD") stops adding directions when one fails
+#     (V2 retried the same failing direction for ever), and ninitial = 1 works
+#     (V2 dropped the one initial value to a vector).
 # =============================================================================
 
 # Required packages
 
 # --- Load the compiled kernel (hdcov_kernels.cpp -> shared object) -----------
-# Set option "hdcov.v2.dir" or variable HDCOV_V2_DIR to point at the folder with
-# hdcov_kernels.cpp; defaults to "CAP-HDcov/V2".
+# The kernel file is named after the R version and architecture
+# (hdcov_kernels_v3-R<major.minor>-<arch>.so, see build_kernels.R), so that
+# machines sharing this folder with different R versions each load their own build.
+# The folder: option "hdcov.v3.dir" or variable HDCOV_V3_DIR if set, else the
+# folder of this file when it is read with source(), else "CAP-HDcov/V3", "V3" or ".".
+# .hdcov_v3_dll: name of the loaded V3 kernel; every .Call() names it (PACKAGE), so
+# that a V2 kernel loaded in the same session (same symbol names) is never used
+.hdcov_v3_dll <- "CAPmethods"   # CAPmethods: the kernels are registered in the package DLL
 # projected scores v'Sigma_i v ; weighted accumulation sum_i w_i Sigma_i
-.hdcov_score <- function(Sigma, v) as.numeric(.Call("hdcov_score_cpp", Sigma, as.numeric(v)))
-.hdcov_accum <- function(Sigma, w) .Call("hdcov_accum_cpp", Sigma, as.numeric(w))
+.hdcov_score <- function(Sigma, v) as.numeric(.Call("hdcov_score_cpp", Sigma, as.numeric(v),PACKAGE=.hdcov_v3_dll))
+.hdcov_accum <- function(Sigma, w) .Call("hdcov_accum_cpp", Sigma, as.numeric(w),PACKAGE=.hdcov_v3_dll)
 
 # === Precompute covariance matrices (RcppArmadillo kernel) ===
 # Returns list(Sigma = p x p x n array, Tvec = per-subject sizes).
 precompute_sigma <- function(Y) {
-  .Call("hdcov_precompute_cpp", lapply(Y, as.matrix))
+  .Call("hdcov_precompute_cpp", lapply(Y, as.matrix),PACKAGE=.hdcov_v3_dll)
 }
 
 # === Projection Estimation via Covariance Regression with Multiple Initial Values ===
@@ -36,7 +69,8 @@ precompute_sigma <- function(Y) {
 
 MatReg_QC_opt <- function(Y, X, Sigma, Tvec, method = c("CAP"),
                           max.itr = 1000, tol = 1e-4, trace = FALSE,
-                          score.return = TRUE, gamma0.mat = NULL, ninitial = NULL) {
+                          score.return = TRUE, gamma0.mat = NULL, ninitial = NULL,
+                          obj.scale = TRUE) {
   n <- length(Y)
   p <- ncol(Y[[1]])
   q <- ncol(X)
@@ -60,9 +94,9 @@ MatReg_QC_opt <- function(Y, X, Sigma, Tvec, method = c("CAP"),
     ninitial <- min(ninitial, ncol(gamma0.mat))
   }
   
-  # Randomly sample initial gamma projections
+  # Randomly sample initial gamma projections (V3: drop = FALSE, so ninitial = 1 works)
   set.seed(2025)
-  gamma0.mat <- gamma0.mat[, sort(sample(1:ncol(gamma0.mat), ninitial, replace = FALSE))]
+  gamma0.mat <- gamma0.mat[, sort(sample(1:ncol(gamma0.mat), ninitial, replace = FALSE)), drop = FALSE]
   
   # Set up parallel computation
   ncores <- min(parallel::detectCores(), ninitial)
@@ -101,12 +135,24 @@ MatReg_QC_opt <- function(Y, X, Sigma, Tvec, method = c("CAP"),
   # Filter out failed results
   results <- results[!sapply(results, is.null)]
   if (length(results) == 0) stop("All parallel optimizations failed.")
-  
-  # Select the result with the lowest scaled objective
-  obj_scales <- sapply(results, function(r) r$obj.scale)
-  best_idx <- which.min(unlist(obj_scales))
+
+  # Select the result with the lowest objective.  V3: argument obj.scale.
+  #   obj.scale = TRUE (default, as V2): the objective at gamma scaled to unit length,
+  #     beta refitted (r$obj.scale).  With an intercept this equals the objective at
+  #     gamma'H gamma = 1 plus (sum_i T_i / 2) log(gamma'H gamma), so it favours
+  #     directions of low average variance.
+  #   obj.scale = FALSE (HDCAP V9): the function the fit minimizes, at its gamma with
+  #     gamma'H gamma = 1 (H = mean Sigma_i, re$gamma) and its beta (r$obj).
+  # A result whose objective is not finite is not used.
+  objs <- sapply(results, function(r) {
+    o <- if (obj.scale) r$obj.scale else r$obj
+    if (is.numeric(o) && length(o) == 1) o else NA
+  })
+  objs[!is.finite(objs)] <- NA
+  if (all(is.na(objs))) stop("MatReg_QC_opt: no initial value of gamma gave a finite objective.")
+  best_idx <- which.min(objs)
   best_result <- results[[best_idx]]
-  
+
   return(best_result$re.scale)
 }
 
@@ -121,10 +167,11 @@ MatReg_QC_opt <- function(Y, X, Sigma, Tvec, method = c("CAP"),
 
 MatReg_QC_opt2 <- function(Y, X, Phi0=NULL, Sigma, Tvec, method=c("CAP"), CAP.OC=FALSE,
                            max.itr=1000, tol=1e-4, trace=FALSE, score.return=FALSE,
-                           gamma0.mat=NULL, ninitial=NULL) {
+                           gamma0.mat=NULL, ninitial=NULL, obj.scale=TRUE) {
   if (is.null(Phi0)) {
     return(MatReg_QC_opt(Y, X, Sigma, Tvec, method=method, max.itr=max.itr, tol=tol,
-                         trace=trace, score.return=score.return, gamma0.mat=gamma0.mat, ninitial=ninitial))
+                         trace=trace, score.return=score.return, gamma0.mat=gamma0.mat, ninitial=ninitial,
+                         obj.scale=obj.scale))
   } else {
     n <- length(Y)
     q <- ncol(X)
@@ -155,7 +202,7 @@ MatReg_QC_opt2 <- function(Y, X, Phi0=NULL, Sigma, Tvec, method=c("CAP"), CAP.OC
     if (CAP.OC == FALSE) {
       re <- MatReg_QC_opt(Ytmp, X, Sigma.new, Tvec.new, method=method, max.itr=max.itr,
                           tol=tol, trace=trace, score.return=score.return,
-                          gamma0.mat=gamma0.mat, ninitial=ninitial)
+                          gamma0.mat=gamma0.mat, ninitial=ninitial, obj.scale=obj.scale)
     } else {
       re <- MatReg_QC_RE(Ytmp, X, Phi0=Phi0, Sigma.new, Tvec.new, max.itr=max.itr, tol=tol, trace=FALSE, score.return=score.return)
     }
@@ -494,8 +541,10 @@ diag.level <-
 
 capReg <-
   function(Y,X,stop.crt=c("nD","DfD"),nD=2,DfD.thred=2,CAP.OC=FALSE,max.itr=1000,tol=1e-4,trace=FALSE,score.return=FALSE,
-           gamma0.mat=NULL,ninitial=NULL)
+           gamma0.mat=NULL,ninitial=NULL,obj.scale=TRUE)
   {
+    # obj.scale (V3): how MatReg_QC_opt compares the initial values of gamma; TRUE (default, as V2)
+    #   the objective at unit-length gamma, FALSE the function the fit minimizes (gamma'H gamma = 1)
     if(stop.crt[1]=="nD"&is.null(nD))
     {
       stop.crt<-"DfD"
@@ -516,7 +565,8 @@ capReg <-
     print("Component 1")
     tem <- proc.time()
     re1 <- MatReg_QC_opt(Y, X, Sigma, Tvec, method = c("CAP"), max.itr = max.itr, tol = tol,
-                         trace = FALSE, score.return = score.return, gamma0.mat = gamma0.mat, ninitial = ninitial)
+                         trace = FALSE, score.return = score.return, gamma0.mat = gamma0.mat, ninitial = ninitial,
+                         obj.scale = obj.scale)
     gamma_times <- (proc.time() - tem)[3][[1]]
     if (trace) print(paste0("Down time ", gamma_times[1]))
     
@@ -537,7 +587,8 @@ capReg <-
           re.tmp<-NULL
           try(re.tmp <- MatReg_QC_opt2(Y, X, Phi0 = Phi.est, Sigma = Sigma, Tvec = Tvec, CAP.OC=CAP.OC,
                                        max.itr = max.itr, tol = tol, trace = trace,
-                                       score.return = score.return, gamma0.mat = gamma0.mat, ninitial = ninitial))
+                                       score.return = score.return, gamma0.mat = gamma0.mat, ninitial = ninitial,
+                                       obj.scale = obj.scale))
           if (!is.null(re.tmp)) {
             gamma_times<-c(gamma_times,(proc.time() - tem)[3][[1]])
             if (trace) print(paste0("Down time ", gamma_times[j]))
@@ -562,7 +613,8 @@ capReg <-
         re.tmp<-NULL
         try(re.tmp <- MatReg_QC_opt2(Y, X, Phi0 = Phi.est, Sigma = Sigma, Tvec = Tvec, CAP.OC=CAP.OC,
                                      max.itr = max.itr, tol = tol, trace = trace,
-                                     score.return = score.return, gamma0.mat = gamma0.mat, ninitial = ninitial))
+                                     score.return = score.return, gamma0.mat = gamma0.mat, ninitial = ninitial,
+                                     obj.scale = obj.scale))
 
         if(is.null(re.tmp)==FALSE)
         {
@@ -581,14 +633,18 @@ capReg <-
             
             if(score.return)
             {
-              score<-cbind(score,re.tmp$score)  
+              score<-cbind(score,re.tmp$score)
             }
           }
+        }else
+        {
+          # V3: stop when the next direction cannot be estimated (V2 retried it for ever)
+          break
         }
       }
     }
-    
-    
+
+
     colnames(Phi.est)=colnames(beta.est)<-paste0("D",1:ncol(Phi.est))
     rownames(Phi.est)<-paste0("V",1:p)
     rownames(beta.est)<-colnames(X)
@@ -758,9 +814,10 @@ SSHDI <- function(Xmat, Ymat, B = 200, prop = 0.5, p0 = NA, gamma_ini) {
 # Output:
 #   - List containing estimated projections, coefficient inference results, and timing.
 
-run_HCAP_pipeline <- function(X, Y_list, stop.crt = "nD", nD = 2, DfD.thred = 2, B = 100) {
+run_HCAP_pipeline <- function(X, Y_list, stop.crt = "nD", nD = 2, DfD.thred = 2, B = 100, obj.scale = TRUE) {
   t0 <- proc.time()
-  cap_res <- capReg(Y_list, X, stop.crt = stop.crt, nD = nD, DfD.thred = DfD.thred, CAP.OC = TRUE, trace = TRUE)
+  cap_res <- capReg(Y_list, X, stop.crt = stop.crt, nD = nD, DfD.thred = DfD.thred, CAP.OC = TRUE, trace = TRUE,
+                    obj.scale = obj.scale)
   gamma_est <- cap_res$gamma
   
   inference_list <- vector("list", ncol(gamma_est))

@@ -5,6 +5,24 @@
 # loops (per-subject second moment Smat, projected scores, the gamma-update
 # weighted accumulation, eigen.solve) call a compiled kernel. The multinomial
 # membership fit (brglm2::brmultinom) stays in R. See CAP-clustering/README.md.
+#
+# V5 (see CAP-clustering/README.md): the changes of HDCAP V8 and V9 that apply to
+# CAP-clustering.  The estimator and the results are those of V4:
+# - The criterion that chooses among the initial values of gamma (the
+#   log-likelihood ll.full of the last EM iteration, at the H-scaled gamma) is
+#   computed from the second moments the EM uses (no covariance shrinkage), so
+#   HDCAP V9 (1) needs no change.
+# - The EM starts from a random draw of the cluster coefficients (beta_k ~
+#   N(0,1), alpha_k ~ N(0,1), set.seed(100)); V5 draws the same values without
+#   changing the random number stream of the caller (as HDCAP V9's
+#   cap_beta0_v5).  V3/V4 left the caller's stream at set.seed(100) after every
+#   capPCL_coef / capPCL_D1 / capPCL_coef_class call.  HDCAP V9's second initial
+#   value 0 has no counterpart here (a common start makes the clusters equal).
+# - As HDCAP V8: the kernel no longer aborts R on a failed iteration (an R error,
+#   caught by try()), one kernel per R version and architecture
+#   (build_kernels.R), every .Call names the V5 kernel, the folder is found from
+#   the file source() reads, and capPCL_D1_opt stops with a clear error when no
+#   initial value of gamma converges (V4 failed on an empty which.max()).
 ############################
 
 # library("nnet")       # multinomial regression
@@ -13,12 +31,41 @@
 
 ############################
 # Load the compiled kernel (cluster_kernels.cpp -> shared object), building it
-# once if necessary. Set option "cluster.v4.dir" or variable CLUSTER_V4_DIR to
-# point at the folder with cluster_kernels.cpp; defaults to "CAP-clustering/V4".
+# once if necessary.  The kernel file is named after the R version and
+# architecture (cluster_kernels_v5-R<major.minor>-<arch>.so, see build_kernels.R),
+# so that machines sharing this folder with different R versions each load their
+# own build.  The folder: option "cluster.v5.dir" or variable CLUSTER_V5_DIR if
+# set, else the folder of this file when it is read with source(), else
+# "CAP-clustering/V5", "V5" or ".".
+# .cluster_v5_dll: name of the loaded V5 kernel; every .Call() names it (PACKAGE),
+# so that a V4 kernel loaded in the same session (same symbol names) is never used
+.cluster_v5_dll <- "CAPmethods"   # CAPmethods: the kernels are registered in the package DLL
+
+# The V3/V4 initial values of the EM, drawn under set.seed(100) in the order of
+# V3/V4 (beta, then alpha, then the index of the default initial gamma), without
+# changing the random number stream of the caller.
+#   q1, q2: numbers of columns of X and W (q2 = NULL: no alpha); K: clusters;
+#   p: draw the index of the default initial gamma among p eigenvectors (NULL: no)
+.cluster_start_v4 <- function(q1, q2 = NULL, K, p = NULL)
+{
+  had <- exists(".Random.seed", envir = globalenv(), inherits = FALSE)
+  if (had) old <- get(".Random.seed", envir = globalenv(), inherits = FALSE)
+  on.exit({
+    if (had) assign(".Random.seed", old, envir = globalenv())
+    else if (exists(".Random.seed", envir = globalenv(), inherits = FALSE))
+      rm(".Random.seed", envir = globalenv())
+  })
+  set.seed(100)
+  re <- list(beta0 = matrix(rnorm(q1 * K, mean = 0, sd = 1), q1, K))
+  if (!is.null(q2)) re$alpha0 <- matrix(rnorm(q2 * K, mean = 0, sd = 1), q2, K)
+  if (!is.null(p)) re$gamma.idx <- round(runif(1, min = 1, max = p))
+  re
+}
+
 # per-subject second moment cube; projected scores; weighted accumulation
-.cluster_smat  <- function(Y) .Call("cluster_smat_cpp", lapply(Y, as.matrix))
-.cluster_score <- function(Smat, v) as.numeric(.Call("cluster_score_cpp", Smat, as.numeric(v)))
-.cluster_accum <- function(Smat, w) .Call("cluster_accum_cpp", Smat, as.numeric(w))
+.cluster_smat  <- function(Y) .Call("cluster_smat_cpp", lapply(Y, as.matrix),PACKAGE=.cluster_v5_dll)
+.cluster_score <- function(Smat, v) as.numeric(.Call("cluster_score_cpp", Smat, as.numeric(v),PACKAGE=.cluster_v5_dll))
+.cluster_accum <- function(Smat, w) .Call("cluster_accum_cpp", Smat, as.numeric(w),PACKAGE=.cluster_v5_dll)
 
 # if(!require("pacman"))
 # {
@@ -95,10 +142,11 @@ capPCL_coef<-function(Y,X,W,gamma,ncluster=2,max.itr=1000,tol=1e-4,trace=FALSE,s
   score<-.cluster_score(Smat, gamma)
   
   # set initial values (some random number)
-  set.seed(100)
-  beta0<-matrix(rnorm(q1*ncluster,mean=0,sd=1),q1,ncluster)
+  # V5: the V3/V4 draws (set.seed(100)), without changing the caller's random numbers
+  st<-.cluster_start_v4(q1,q2,ncluster)
+  beta0<-st$beta0
   rownames(beta0)<-colnames(X)
-  alpha0<-matrix(rnorm(q2*ncluster,mean=0,sd=1),q2,ncluster)
+  alpha0<-st$alpha0
   rownames(alpha0)<-colnames(W)
   colnames(beta0)=colnames(alpha0)<-paste0("cluster",1:ncluster)
   alpha0[,1]<-0         # first class coefficients zero
@@ -243,7 +291,7 @@ capPCL_coef<-function(Y,X,W,gamma,ncluster=2,max.itr=1000,tol=1e-4,trace=FALSE,s
 eigen.solve<-function(A,H)
 {
   # smallest generalized eigenvector of A w.r.t. H  (RcppArmadillo kernel)
-  as.numeric(.Call("cluster_eigen_solve_cpp", as.matrix(A), as.matrix(H)))
+  as.numeric(.Call("cluster_eigen_solve_cpp", as.matrix(A), as.matrix(H),PACKAGE=.cluster_v5_dll))
 }
 
 # finding the first component
@@ -274,17 +322,19 @@ capPCL_D1<-function(Y,X,W,H=NULL,ncluster=2,max.itr=1000,tol=1e-4,trace=FALSE,sc
   }
 
   # set initial values (some random number)
-  set.seed(100)
-  beta0<-matrix(rnorm(q1*ncluster,mean=0,sd=1),q1,ncluster)
+  # V5: the V3/V4 draws (set.seed(100); with gamma0 = NULL also the index of the
+  # initial gamma), without changing the caller's random numbers
+  st<-.cluster_start_v4(q1,q2,ncluster,p=if(is.null(gamma0)) p else NULL)
+  beta0<-st$beta0
   rownames(beta0)<-colnames(X)
-  alpha0<-matrix(rnorm(q2*ncluster,mean=0,sd=1),q2,ncluster)
+  alpha0<-st$alpha0
   rownames(alpha0)<-colnames(W)
   colnames(beta0)=colnames(alpha0)<-paste0("cluster",1:ncluster)
   alpha0[,1]<-0         # first class coefficients zero
   if(is.null(gamma0))
   {
     H.eigen<-eigen(H)
-    gamma0<-H.eigen$vectors[,round(runif(1,min=1,max=p))]
+    gamma0<-H.eigen$vectors[,st$gamma.idx]
   }
   
   if(trace)
@@ -452,6 +502,11 @@ capPCL_D1_opt<-function(Y,X,W,H=NULL,ncluster=2,max.itr=1000,tol=1e-4,trace=TRUE
     # print(kk)
   }
   opt.idx<-which.max(ll.vec[,2])
+  if(length(opt.idx)==0)
+  {
+    # V5: a clear error (V4 failed on re.tmp[[integer(0)]])
+    stop("capPCL_D1_opt: no initial value of gamma gave a converged estimate.")
+  }
   re<-re.tmp[[opt.idx]]
   
   return(re)
@@ -790,8 +845,8 @@ capPCL_coef_class<-function(Y,X,W,gamma,eta,max.itr=1000,tol=1e-4,trace=FALSE,sc
   
   # estimate of beta
   # set initial values (some random number)
-  set.seed(100)
-  beta0<-matrix(rnorm(q1*ncluster,mean=0,sd=1),q1,ncluster)
+  # V5: the V3/V4 draw (set.seed(100)), without changing the caller's random numbers
+  beta0<-.cluster_start_v4(q1,NULL,ncluster)$beta0
   rownames(beta0)<-colnames(X)
   colnames(beta0)<-paste0("cluster",1:ncluster)
   

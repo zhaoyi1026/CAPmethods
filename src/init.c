@@ -8,7 +8,7 @@ extern SEXP hd_covls_cpp(SEXP);
 extern SEXP hd_score_cpp(SEXP, SEXP);
 extern SEXP hd_capbeta_cpp(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern SEXP hd_capd1_cpp(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
-extern SEXP hd_objfunc_cpp(SEXP, SEXP, SEXP, SEXP, SEXP);
+extern SEXP hd_objfunc_cpp(SEXP, SEXP, SEXP, SEXP, SEXP, SEXP);
 extern SEXP lcap_covls_cpp(SEXP);
 extern SEXP lcap_gammasolve_cpp(SEXP, SEXP);
 extern SEXP lcap_score_cpp(SEXP, SEXP);
@@ -40,7 +40,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"hd_score_cpp", (DL_FUNC) &hd_score_cpp, 2},
     {"hd_capbeta_cpp", (DL_FUNC) &hd_capbeta_cpp, 8},
     {"hd_capd1_cpp", (DL_FUNC) &hd_capd1_cpp, 9},
-    {"hd_objfunc_cpp", (DL_FUNC) &hd_objfunc_cpp, 5},
+    {"hd_objfunc_cpp", (DL_FUNC) &hd_objfunc_cpp, 6},
     {"lcap_covls_cpp", (DL_FUNC) &lcap_covls_cpp, 1},
     {"lcap_gammasolve_cpp", (DL_FUNC) &lcap_gammasolve_cpp, 2},
     {"lcap_score_cpp", (DL_FUNC) &lcap_score_cpp, 2},

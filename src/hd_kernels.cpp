@@ -7,6 +7,29 @@
 // loops move to C++. With covariance shrinkage, every per-subject quantity
 // reduces to the score gamma' Sigma_i gamma and gg = gamma'gamma, so the beta
 // and objective kernels need only those (not the full Sigma).
+//
+// HDCAP/V8: the kernels of V7, unchanged, except that each .Call entry point is
+// wrapped in BEGIN_RCPP / END_RCPP.  In V7 a C++ exception (e.g. "pinv(): svd
+// failed" when a beta iteration diverges, or Mat::col() on an empty eigen
+// decomposition) crossed the extern "C" boundary uncaught and aborted the R
+// process; now it is an ordinary R error, which the try() calls of CAP_HD.R
+// catch as in the pure-R V5/V6 (a failed initial value or bootstrap draw is
+// skipped).
+//
+// HDCAP/V9: the objective (obj_core, hd_objfunc_cpp) is the function the fit
+// minimizes, sum_i T_i (x_i'beta + s_i exp(-x_i'beta)), argument shrink the
+// covariance shrinkage of the fit:
+//   without shrinkage s_i = score_i (the negative log-likelihood);
+//   with shrinkage s_i = rho1 gamma'gamma + rho2 score_i, the shrunk score of the
+//   beta iteration (cap_beta_core), score_i from the covariances of the fit
+//   (per-subject linear shrinkage, computed once before the iterations) and
+//   rho1, rho2 its weights shared by all subjects (shrink_weights) at
+//   (gamma, beta).
+// Up to V8 the objective always applied linear shrinkage weights of another
+// formula (psi2 without /T_i) to the scores of the sample covariances, also for
+// a fit without shrinkage, so the initial values were compared on a function
+// other than the one the gamma/beta iteration minimizes.  The other kernels are
+// those of V8.
 // =============================================================================
 #include <RcppArmadillo.h>
 using namespace arma;
@@ -123,17 +146,21 @@ static vec cap_d1_core(const cube& Sig, const mat& X, const vec& Tvec, const mat
   return gamma;   // converged, unnormalized
 }
 
-// ---- HDCAP objective (obj.func: uses ^2 and /delta2 for the weights) --------
+// ---- HDCAP objective (obj.func) ----------------------------------------------
+// V9: the function the fit minimizes.  score: gamma' Sigma_i gamma with the
+// covariances of the fit (per-subject linear shrinkage when shrink).
+//   shrink = false: sum_i T_i (x_i'beta + score_i exp(-x_i'beta))
+//   shrink = true:  the same with the shrunk score of cap_beta_core,
+//                   rho1 gg + rho2 score_i, weights of shrink_weights at beta
 static double obj_core(const vec& score, double gg, const mat& X, const vec& Tvec,
-                       const vec& beta) {
+                       const vec& beta, bool shrink) {
   vec Xbeta = X * beta;
-  double mu = mean(exp(Xbeta)) / gg;
-  double delta2 = mean(square(score - mu * gg));
-  double psi2 = std::min(mean(square(score - exp(Xbeta))), delta2);
-  double phi2 = delta2 - psi2;
-  double rho1 = psi2 * mu / delta2;
-  double rho2 = phi2 / delta2;
-  vec sk = rho1 * gg + rho2 * score;
+  vec sk = score;
+  if (shrink) {
+    double rho1, rho2;
+    shrink_weights(score, Xbeta, Tvec, gg, rho1, rho2);
+    sk = rho1 * gg + rho2 * score;
+  }
   return sum(Tvec % (Xbeta + exp(-Xbeta) % sk));
 }
 
@@ -146,16 +173,23 @@ static vec score_core(const cube& Sig, const vec& gamma) {
 // ---- extern "C" wrappers ----------------------------------------------------
 // Symbols are hd_-prefixed to avoid colliding with the CAP/V6 kernel (which is
 // loaded in the same R process and exports score_cpp / objfunc_cpp too).
+// BEGIN_RCPP / END_RCPP (V8): a C++ exception becomes an R error instead of
+// aborting R.
 extern "C" SEXP hd_covls_cpp(SEXP Y_) {
+BEGIN_RCPP
   return wrap(cov_ls_core(as<mat>(Y_)));
+END_RCPP
 }
 
 extern "C" SEXP hd_score_cpp(SEXP Sig_, SEXP gamma_) {
+BEGIN_RCPP
   return wrap(score_core(as<cube>(Sig_), as<vec>(gamma_)));
+END_RCPP
 }
 
 extern "C" SEXP hd_capbeta_cpp(SEXP score_, SEXP gg_, SEXP X_, SEXP Tvec_, SEXP shrink_,
                             SEXP beta0_, SEXP maxitr_, SEXP tol_) {
+BEGIN_RCPP
   vec score = as<vec>(score_); double gg = as<double>(gg_);
   mat X = as<mat>(X_); vec Tvec = as<vec>(Tvec_); bool sh = as<bool>(shrink_);
   vec beta0 = as<vec>(beta0_);
@@ -164,10 +198,12 @@ extern "C" SEXP hd_capbeta_cpp(SEXP score_, SEXP gg_, SEXP X_, SEXP Tvec_, SEXP 
                            as<double>(tol_), rho1, rho2, iter);
   return wrap(List::create(_["beta"] = beta, _["rho1"] = rho1, _["rho2"] = rho2,
                            _["iter"] = iter));
+END_RCPP
 }
 
 extern "C" SEXP hd_capd1_cpp(SEXP Sig_, SEXP X_, SEXP Tvec_, SEXP H_, SEXP gamma0_,
                           SEXP shrink_, SEXP beta0_, SEXP maxitr_, SEXP tol_) {
+BEGIN_RCPP
   cube Sig = as<cube>(Sig_); mat X = as<mat>(X_); vec Tvec = as<vec>(Tvec_);
   mat H = as<mat>(H_); vec g0 = as<vec>(gamma0_); bool sh = as<bool>(shrink_);
   vec beta0 = as<vec>(beta0_);
@@ -176,9 +212,13 @@ extern "C" SEXP hd_capd1_cpp(SEXP Sig_, SEXP X_, SEXP Tvec_, SEXP H_, SEXP gamma
                       as<double>(tol_), rho1, rho2, iter);
   return wrap(List::create(_["gamma"] = g, _["rho1"] = rho1, _["rho2"] = rho2,
                            _["iter"] = iter));
+END_RCPP
 }
 
-extern "C" SEXP hd_objfunc_cpp(SEXP score_, SEXP gg_, SEXP X_, SEXP Tvec_, SEXP beta_) {
+extern "C" SEXP hd_objfunc_cpp(SEXP score_, SEXP gg_, SEXP X_, SEXP Tvec_, SEXP beta_,
+                               SEXP shrink_) {
+BEGIN_RCPP
   return wrap(obj_core(as<vec>(score_), as<double>(gg_), as<mat>(X_),
-                       as<vec>(Tvec_), as<vec>(beta_)));
+                       as<vec>(Tvec_), as<vec>(beta_), as<bool>(shrink_)));
+END_RCPP
 }

@@ -8,6 +8,13 @@
 // (brglm2::brmultinom) stays in R.
 //
 // Symbols are cluster_-prefixed to avoid colliding with the other CAP kernels.
+//
+// CAP-clustering/V5: the kernels of V4, unchanged, except that each .Call entry
+// point is wrapped in BEGIN_RCPP / END_RCPP (as HDCAP V8).  In V4 a C++
+// exception (e.g. eig_sym() on a non-finite matrix when an iteration diverges,
+// or a conversion error) crossed the extern "C" boundary uncaught and aborted the
+// R process; now it is an ordinary R error, which the try() calls of
+// CAP_Cluster.R catch.  CAP_Cluster.R names the V5 kernel in every .Call (PACKAGE).
 // =============================================================================
 #include <RcppArmadillo.h>
 using namespace arma;
@@ -57,14 +64,22 @@ static vec eigen_solve_core(const mat& A, const mat& H) {
 
 // ---- extern "C" wrappers ----------------------------------------------------
 extern "C" SEXP cluster_smat_cpp(SEXP Y_) {
+BEGIN_RCPP
   return smat_core(as<List>(Y_));
+END_RCPP
 }
 extern "C" SEXP cluster_score_cpp(SEXP S_, SEXP v_) {
+BEGIN_RCPP
   return wrap(score_core(as<cube>(S_), as<vec>(v_)));
+END_RCPP
 }
 extern "C" SEXP cluster_accum_cpp(SEXP S_, SEXP w_) {
+BEGIN_RCPP
   return wrap(accum_core(as<cube>(S_), as<vec>(w_)));
+END_RCPP
 }
 extern "C" SEXP cluster_eigen_solve_cpp(SEXP A_, SEXP H_) {
+BEGIN_RCPP
   return wrap(eigen_solve_core(as<mat>(A_), as<mat>(H_)));
+END_RCPP
 }

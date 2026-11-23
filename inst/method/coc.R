@@ -4,14 +4,106 @@
 # V3: RcppArmadillo-accelerated update of V2. Same interface and outputs; the hot
 # loops (cov.ls, cov.sk.x, cov.sk.y, eigen.solve) call a compiled kernel. See
 # CAP-CoC/README.md.
+#
+# V4 (see CAP-CoC/README.md): the changes of HDCAP V8 and V9 that apply to CoC.
+# (1) The objective that chooses among the initial values (obj.func, in
+#     COCReg.D1.opt and COCReg.D1) is the function the fit minimizes,
+#     mean_i (log(gamma'Sigma_i gamma) - alpha log(theta'Delta_i theta) - W_i'beta)^2
+#     with gamma'Hy gamma = theta'Hx theta = 1, and the covariances of the fit:
+#     with outcome shrinkage (cov.shrinkage.y, forced when min(T_i) - 5 < q)
+#     Sigma_i = cov.sk.y(Y, gamma, kappa), the shrinkage of the fit at
+#     kappa_i = exp(alpha log(theta'Delta_i theta) + W_i'beta) (the covariances
+#     COCReg.coef and COCReg.D1.base iterate on); without, the sample covariance.
+#     Up to V3 it used the per-subject linear shrinkage cov.ls (the starting
+#     covariance of the iterations) with outcome shrinkage, a function the
+#     iteration does not minimize.  Delta_i: cov.sk.x or the sample covariance,
+#     as in the fit (unchanged).
+# (2) Initial values of beta, argument beta0 of COCReg, COCReg.Dk, COCReg.D1.opt,
+#     COCReg.D1, COCReg.D1.base, COCReg.coef, COCReg.coef.asmp and
+#     COCReg.coef.boot: a vector of length ncol(W) (one initial value) or a matrix
+#     with ncol(W) rows (one initial value per column); the initial alpha is 0.
+#     beta0 = NULL (default) is two initial values, 0 and coc_beta0_v3() (the
+#     V2-V3 start, set.seed(100); c(0, rnorm(r-1, 1, 1)), now drawn without
+#     changing the caller's random numbers).  COCReg.D1.opt runs every initial
+#     value of (gamma, theta) from every initial value of beta and keeps the
+#     direction with the lowest objective; every (alpha, beta) fit (COCReg.coef:
+#     the final coefficients of a direction, the objective of each candidate,
+#     each bootstrap draw) keeps the converged estimate with the lowest objective.
+#     With beta0 = coc_beta0_v3(ncol(W)) V4 runs the iterations of V3.
+# (3) As HDCAP V8: the kernel no longer aborts R on a failed iteration (an R
+#     error, caught by try()), one kernel per R version and architecture
+#     (build_kernels.R), every .Call names the V4 kernel, the folder is found
+#     from the file source() reads, and COCReg.D1.opt skips an initial value
+#     whose coefficients or objective cannot be computed (V3 kept the coef.tmp of
+#     the previous initial value) and stops with a clear error when none can.
 #################################################
 
 
 #################################################
 # Load the compiled kernel (coc_kernels.cpp -> shared object), building it once
-# if necessary. Set option "coc.v3.dir" or variable COC_V3_DIR to point at the
-# folder containing coc_kernels.cpp; defaults to "CAP-CoC/V3".
+# if necessary.  The kernel file is named after the R version and architecture
+# (coc_kernels_v4-R<major.minor>-<arch>.so, see build_kernels.R), so that
+# machines sharing this folder with different R versions each load their own build.
+# The folder: option "coc.v4.dir" or variable COC_V4_DIR if set, else the folder
+# of this file when it is read with source(), else "CAP-CoC/V4", "V4" or ".".
 
+# .coc_v4_dll: name of the loaded V4 kernel; every .Call() names it (PACKAGE), so
+# that a V3 kernel loaded in the same session (same symbol names, but one that
+# aborts R on a failed iteration) is never used by mistake
+.coc_v4_dll <- "CAPmethods"   # CAPmethods: the kernels are registered in the package DLL
+
+# The V2-V3 initial value of beta: 0 for the intercept, N(1,1) draws for the other
+# coefficients under set.seed(100) (the start of HDCAP V5-V8, cap_beta0_v5).  V4
+# draws it without changing the random number stream of the caller (V2-V3 left
+# it at set.seed(100)).
+coc_beta0_v3 <- function(r)
+{
+  had <- exists(".Random.seed", envir = globalenv(), inherits = FALSE)
+  if (had) old <- get(".Random.seed", envir = globalenv(), inherits = FALSE)
+  on.exit({
+    if (had) assign(".Random.seed", old, envir = globalenv())
+    else if (exists(".Random.seed", envir = globalenv(), inherits = FALSE))
+      rm(".Random.seed", envir = globalenv())
+  })
+  set.seed(100)
+  c(0, rnorm(r - 1, mean = 1, sd = 1))
+}
+
+# initial values of beta as an r x m matrix, one column per initial value:
+#   beta0 = NULL (default): two, 0 and coc_beta0_v3(r)
+#   a vector of length r: that one;  a matrix with r rows: its columns
+.coc_beta0 <- function(r, beta0 = NULL)
+{
+  if (is.null(beta0)) return(cbind(rep(0, r), coc_beta0_v3(r)))
+  B0 <- if (is.matrix(beta0)) beta0 else matrix(as.numeric(beta0), ncol = 1)
+  if (!is.numeric(B0) || nrow(B0) != r || ncol(B0) < 1 || any(!is.finite(B0)))
+    stop("beta0 must be a finite numeric vector of length ncol(W) = ", r,
+         ", or a matrix with ", r, " rows (one initial value per column).")
+  storage.mode(B0) <- "double"
+  B0
+}
+
+# objective of a fit from its scores: mean_i (log sy_i - alpha log sx_i - W_i'beta)^2
+# (obj.func with the covariances of the fit, whose scores COCReg.coef returns)
+.coc_obj_scores <- function(sy, sx, W, alpha, beta)
+{
+  mean((log(sy) - alpha * log(sx) - c(W %*% beta))^2, na.rm = TRUE)
+}
+
+# objective of a direction, as COCReg.D1.opt compares its initial values: gamma and
+# theta scaled to gamma'Hy gamma = theta'Hx theta = 1, (alpha, beta) from every
+# initial value of beta (COCReg.coef), obj.func with the covariances of the fit
+.coc_dir_obj <- function(Y, X, W, gamma, theta, Hy, Hx, Sy, Sx, cov.shrinkage.y, cov.shrinkage.x,
+                         B0, max.itr, tol)
+{
+  gamma.unscale <- c(gamma) / sqrt(t(gamma) %*% Hy %*% gamma)[1, 1]
+  theta.unscale <- c(theta) / sqrt(t(theta) %*% Hx %*% theta)[1, 1]
+  coef.tmp <- COCReg.coef(Y, X, W, gamma = gamma.unscale, theta = theta.unscale,
+                          cov.shrinkage.y = cov.shrinkage.y, cov.shrinkage.x = cov.shrinkage.x,
+                          max.itr = max.itr, tol = tol, trace = FALSE, score.return = FALSE, beta0 = B0)
+  obj.func(Y, X, W, Sigma = Sy, Delta = Sx, gamma = gamma.unscale, theta = theta.unscale,
+           alpha = coef.tmp$alpha, beta = coef.tmp$beta, cov.shrinkage.y = cov.shrinkage.y)
+}
 
 #################################################
 # standardized Frobenius norm
@@ -31,7 +123,13 @@ norm.F.std<-function(A1,A2=NULL)
 
 #################################################
 # objective function
-obj.func<-function(Y,X,W,Sigma,Delta,gamma,theta,alpha,beta)
+# V4: argument cov.shrinkage.y.  TRUE: Sigma is replaced by the covariances the fit
+# iterates on with outcome shrinkage, cov.sk.y(Y, gamma, kappa) at
+# kappa_i = exp(alpha log(theta'Delta_i theta) + W_i'beta), so the value is the
+# function the fit minimizes at (gamma, theta, alpha, beta) (COCReg.D1.opt,
+# COCReg.D1).  FALSE (default): Sigma as given, as up to V3 (COCReg.D1.base
+# monitors its iterations with the shrunk Sigma it holds).
+obj.func<-function(Y,X,W,Sigma,Delta,gamma,theta,alpha,beta,cov.shrinkage.y=FALSE)
 {
   # Y: list of outcome data
   # X: list of predictor data
@@ -42,10 +140,16 @@ obj.func<-function(Y,X,W,Sigma,Delta,gamma,theta,alpha,beta)
   # theta: linear projection on X
   # alpha: model coefficient of log(theta'*Delta*theta)
   # beta: model coefficient of W
-  
+
   # projected scores via the kernel, then vectorized objective
-  sy<-as.numeric(.Call("coc_score_cpp",Sigma,as.numeric(gamma)))
-  sx<-as.numeric(.Call("coc_score_cpp",Delta,as.numeric(theta)))
+  sx<-as.numeric(.Call("coc_score_cpp",Delta,as.numeric(theta),PACKAGE=.coc_v4_dll))
+  if(cov.shrinkage.y)
+  {
+    # covariance estimate of y of the fit (as COCReg.coef / COCReg.D1.base)
+    kappa.tmp<-exp(alpha*log(sx)+c(W%*%beta))
+    Sigma<-cov.sk.y(Y,gamma,kappa.tmp)
+  }
+  sy<-as.numeric(.Call("coc_score_cpp",Sigma,as.numeric(gamma),PACKAGE=.coc_v4_dll))
   lv<-(log(sy)-alpha*log(sx)-c(W%*%beta))^2
   re<-mean(lv,na.rm=TRUE)
   return(re)
@@ -59,35 +163,71 @@ obj.func<-function(Y,X,W,Sigma,Delta,gamma,theta,alpha,beta)
 cov.sk.x<-function(X)
 {
   # X: list of p dimensional data  (RcppArmadillo kernel)
-  .Call("coc_cov_sk_x_cpp", lapply(X, as.matrix))
+  .Call("coc_cov_sk_x_cpp", lapply(X, as.matrix),PACKAGE=.coc_v4_dll)
 }
 
 # Sigma
 cov.sk.y<-function(Y,gamma,kappa.vec)
 {
   # Y: list of data; gamma: projection; kappa: eigenvalue means  (kernel)
-  .Call("coc_cov_sk_y_cpp", lapply(Y, as.matrix), as.numeric(gamma), as.numeric(kappa.vec))
+  .Call("coc_cov_sk_y_cpp", lapply(Y, as.matrix), as.numeric(gamma), as.numeric(kappa.vec),PACKAGE=.coc_v4_dll)
 }
 
 # linear shrinkage of a n by p data matrix
 cov.ls<-function(X)
 {
   # X: n by p data matrix  (RcppArmadillo kernel)
-  matrix(.Call("coc_cov_ls_cpp", as.matrix(X)), nrow = ncol(X))
+  matrix(.Call("coc_cov_ls_cpp", as.matrix(X),PACKAGE=.coc_v4_dll), nrow = ncol(X))
 }
 #################################################
 
 #################################################
 # given gamma and theta, estimate alpha and beta
 
-COCReg.coef<-function(Y,X,W,gamma,theta,cov.shrinkage.y=TRUE,cov.shrinkage.x=TRUE,max.itr=1000,tol=1e-4,trace=FALSE,score.return=TRUE)
+COCReg.coef<-function(Y,X,W,gamma,theta,cov.shrinkage.y=TRUE,cov.shrinkage.x=TRUE,max.itr=1000,tol=1e-4,trace=FALSE,score.return=TRUE,beta0=NULL)
 {
   # Y: list of outcome data
   # X: list of predictor data
   # W: covariates
   # gamma: linear projection on Y
   # theta: linear projection on X
-  
+  # beta0 (V4): initial value(s) of beta (alpha starts at 0): a vector of length ncol(W), or a matrix with
+  #        ncol(W) rows; NULL = two, 0 and coc_beta0_v3(ncol(W)).  Several: one fit per initial value, the
+  #        converged estimate with the lowest objective (a non-converged one only when none converged)
+
+  B0<-.coc_beta0(ncol(W),beta0)
+  if(ncol(B0)>1)
+  {
+    best<-NULL
+    for(jj in 1:ncol(B0))
+    {
+      re.jj<-NULL
+      try(re.jj<-COCReg.coef(Y,X,W,gamma,theta,cov.shrinkage.y=cov.shrinkage.y,cov.shrinkage.x=cov.shrinkage.x,max.itr=max.itr,tol=tol,
+                             trace=trace,score.return=TRUE,beta0=B0[,jj]))
+      if(is.null(re.jj)) next
+      if(any(!is.finite(c(re.jj$alpha,re.jj$beta)))) next
+      # objective with the covariances of the fit (its scores: shrinkage at its alpha, beta)
+      ob<-.coc_obj_scores(re.jj$score.y,re.jj$score.x,W,re.jj$alpha,re.jj$beta)
+      if(!is.finite(ob)) ob<-Inf
+      if(is.null(best)||(re.jj$convergence&&!best$re$convergence)||
+         (re.jj$convergence==best$re$convergence&&ob<best$obj))
+      {
+        best<-list(re=re.jj,obj=ob)
+      }
+    }
+    if(is.null(best))
+    {
+      stop("COCReg.coef: alpha and beta could not be estimated from any initial value of beta.")
+    }
+    re<-best$re
+    if(!score.return)
+    {
+      re$score.y<-NULL
+      re$score.x<-NULL
+    }
+    return(re)
+  }
+
   n<-length(Y)
   p<-ncol(X[[1]])
   q<-ncol(Y[[1]])
@@ -149,18 +289,19 @@ COCReg.coef<-function(Y,X,W,gamma,theta,cov.shrinkage.y=TRUE,cov.shrinkage.x=TRU
   #   Hy<-Hy+Sy[,,i]*nyvec[i]/sum(nyvec)
   # }
   
-  score.x<-as.numeric(.Call("coc_score_cpp",Sx,as.numeric(theta)))
-  score.y<-as.numeric(.Call("coc_score_cpp",Sy,as.numeric(gamma)))
-  
-  set.seed(100)
+  score.x<-as.numeric(.Call("coc_score_cpp",Sx,as.numeric(theta),PACKAGE=.coc_v4_dll))
+  score.y<-as.numeric(.Call("coc_score_cpp",Sy,as.numeric(gamma),PACKAGE=.coc_v4_dll))
+
+  # V4: the initial value of beta given (V2-V3: set.seed(100); c(0,rnorm(r-1,mean=1,sd=1)),
+  # i.e. coc_beta0_v3(r)); alpha starts at 0
   alpha0<-0
-  beta0<-c(0,rnorm(r-1,mean=1,sd=1))
-  
+  beta0<-B0[,1]
+
   if(trace)
   {
     alpha.trace<-NULL
     beta.trace<-NULL
-    
+
     obj<-NULL
   }
   
@@ -190,7 +331,7 @@ COCReg.coef<-function(Y,X,W,gamma,theta,cov.shrinkage.y=TRUE,cov.shrinkage.x=TRU
         kappa.tmp[i]<-exp(alpha.new*log(score.x[i])+t(beta.new)%*%W[i,])
       }
       Sy<-cov.sk.y(Y,gamma,kappa.tmp)
-      score.y<-as.numeric(.Call("coc_score_cpp",Sy,as.numeric(gamma)))
+      score.y<-as.numeric(.Call("coc_score_cpp",Sy,as.numeric(gamma),PACKAGE=.coc_v4_dll))
     }
     
     diff<-max(c(abs(beta.new-beta0),abs(alpha.new-alpha0)))
@@ -241,7 +382,7 @@ COCReg.coef<-function(Y,X,W,gamma,theta,cov.shrinkage.y=TRUE,cov.shrinkage.x=TRU
   return(re)
 }
 
-COCReg.coef.asmp<-function(Y,X,W,gamma,theta,conf.level=conf.level,cov.shrinkage.y=TRUE,cov.shrinkage.x=TRUE,max.itr=1000,tol=1e-4,trace=FALSE,score.return=TRUE)
+COCReg.coef.asmp<-function(Y,X,W,gamma,theta,conf.level=conf.level,cov.shrinkage.y=TRUE,cov.shrinkage.x=TRUE,max.itr=1000,tol=1e-4,trace=FALSE,score.return=TRUE,beta0=NULL)
 {
   # Y: list of outcome data
   # X: list of predictor data
@@ -310,10 +451,10 @@ COCReg.coef.asmp<-function(Y,X,W,gamma,theta,conf.level=conf.level,cov.shrinkage
   #   Hy<-Hy+Sy[,,i]*nyvec[i]/sum(nyvec)
   # }
   
-  score.x<-as.numeric(.Call("coc_score_cpp",Sx,as.numeric(theta)))
-  score.y<-as.numeric(.Call("coc_score_cpp",Sy,as.numeric(gamma)))
+  score.x<-as.numeric(.Call("coc_score_cpp",Sx,as.numeric(theta),PACKAGE=.coc_v4_dll))
+  score.y<-as.numeric(.Call("coc_score_cpp",Sy,as.numeric(gamma),PACKAGE=.coc_v4_dll))
   
-  out.coef<-COCReg.coef(Y,X,W,gamma,theta,cov.shrinkage.y=cov.shrinkage.y,cov.shrinkage.x=cov.shrinkage.x,max.itr=max.itr,tol=tol,trace=trace,score.return=score.return)
+  out.coef<-COCReg.coef(Y,X,W,gamma,theta,cov.shrinkage.y=cov.shrinkage.y,cov.shrinkage.x=cov.shrinkage.x,max.itr=max.itr,tol=tol,trace=trace,score.return=score.return,beta0=beta0)
   
   #-------------------
   # asymptotic inference
@@ -419,8 +560,8 @@ COCReg.coef.lm<-function(Y,X,W,gamma,theta,conf.level=conf.level,cov.shrinkage.y
   #   Hy<-Hy+Sy[,,i]*nyvec[i]/sum(nyvec)
   # }
   
-  score.x<-as.numeric(.Call("coc_score_cpp",Sx,as.numeric(theta)))
-  score.y<-as.numeric(.Call("coc_score_cpp",Sy,as.numeric(gamma)))
+  score.x<-as.numeric(.Call("coc_score_cpp",Sx,as.numeric(theta),PACKAGE=.coc_v4_dll))
+  score.y<-as.numeric(.Call("coc_score_cpp",Sy,as.numeric(gamma),PACKAGE=.coc_v4_dll))
   
   dtmp<-data.frame(Y=log(score.y),X=log(score.x),W)
   fit<-lm(Y~0+.,data=dtmp)
@@ -456,7 +597,7 @@ COCReg.coef.lm<-function(Y,X,W,gamma,theta,conf.level=conf.level,cov.shrinkage.y
 eigen.solve<-function(A,H)
 {
   # smallest generalized eigenvector of A w.r.t. H  (RcppArmadillo kernel)
-  as.numeric(.Call("coc_eigen_solve_cpp", as.matrix(A), as.matrix(H)))
+  as.numeric(.Call("coc_eigen_solve_cpp", as.matrix(A), as.matrix(H),PACKAGE=.coc_v4_dll))
 }
 #################################################
 
@@ -466,7 +607,7 @@ eigen.solve<-function(A,H)
 # given theta: estimate gamma, alpha, beta
 # given gamma: estimate theta, alpha, beta
 
-COCReg.D1.base<-function(Y,X,W,gamma=NULL,theta=NULL,Hy=NULL,Hx=NULL,cov.shrinkage.y=TRUE,cov.shrinkage.x=TRUE,max.itr=1000,tol=1e-4,trace=FALSE,score.return=TRUE,gamma0=NULL,theta0=NULL,burn.in=1000)
+COCReg.D1.base<-function(Y,X,W,gamma=NULL,theta=NULL,Hy=NULL,Hx=NULL,cov.shrinkage.y=TRUE,cov.shrinkage.x=TRUE,max.itr=1000,tol=1e-4,trace=FALSE,score.return=TRUE,gamma0=NULL,theta0=NULL,burn.in=1000,beta0=NULL)
 {
   # Y: list of outcome data
   # X: list of predictor data
@@ -544,9 +685,43 @@ COCReg.D1.base<-function(Y,X,W,gamma=NULL,theta=NULL,Hy=NULL,Hx=NULL,cov.shrinka
     }
   }
   
-  set.seed(100)
+  # V4: initial value(s) of beta (r x m matrix).  Several: one run per initial value
+  # of beta, the direction with the lowest objective, compared as in COCReg.D1.opt
+  # (.coc_dir_obj: gamma'Hy gamma = theta'Hx theta = 1, alpha/beta from every initial
+  # value, the covariances of the fit)
+  B0<-.coc_beta0(r,beta0)
+  if(ncol(B0)>1)
+  {
+    best<-NULL
+    best.obj<-Inf
+    for(jj in 1:ncol(B0))
+    {
+      re.jj<-NULL
+      try(re.jj<-COCReg.D1.base(Y,X,W,gamma=gamma,theta=theta,Hy=Hy,Hx=Hx,cov.shrinkage.y=cov.shrinkage.y,cov.shrinkage.x=cov.shrinkage.x,
+                                max.itr=max.itr,tol=tol,trace=trace,score.return=score.return,gamma0=gamma0,theta0=theta0,burn.in=burn.in,
+                                beta0=B0[,jj]))
+      if(is.null(re.jj)==FALSE)
+      {
+        ob<-NA
+        try(ob<-.coc_dir_obj(Y,X,W,re.jj$gamma,re.jj$theta,Hy,Hx,Sy,Sx,cov.shrinkage.y,cov.shrinkage.x,B0,max.itr,tol))
+        if(is.finite(ob)&&ob<best.obj)
+        {
+          best<-re.jj
+          best.obj<-ob
+        }
+      }
+    }
+    if(is.null(best))
+    {
+      stop("COCReg.D1.base: no initial value of beta gave an estimate.")
+    }
+    return(best)
+  }
+
+  # one initial value of beta (V2-V3: set.seed(100); c(0,rnorm(r-1,mean=1,sd=1)), i.e.
+  # coc_beta0_v3(r)); alpha starts at 0
   alpha0<-0
-  beta0<-c(0,rnorm(r-1,mean=1,sd=1))
+  beta0<-B0[,1]
   if(is.null(gamma0)&is.null(gamma))
   {
     gamma0<-rep(1/sqrt(q),q) 
@@ -564,8 +739,8 @@ COCReg.D1.base<-function(Y,X,W,gamma=NULL,theta=NULL,Hy=NULL,Hx=NULL,cov.shrinka
       theta0<-theta
     }
   
-  score.x<-as.numeric(.Call("coc_score_cpp",Sx,as.numeric(theta0)))
-  score.y<-as.numeric(.Call("coc_score_cpp",Sy,as.numeric(gamma0)))
+  score.x<-as.numeric(.Call("coc_score_cpp",Sx,as.numeric(theta0),PACKAGE=.coc_v4_dll))
+  score.y<-as.numeric(.Call("coc_score_cpp",Sy,as.numeric(gamma0),PACKAGE=.coc_v4_dll))
   
   if(trace)
   {
@@ -602,10 +777,10 @@ COCReg.D1.base<-function(Y,X,W,gamma=NULL,theta=NULL,Hy=NULL,Hx=NULL,cov.shrinka
       # update theta
       Vtmp<-log(score.y)-c(W%*%beta.new)
       w2<-((alpha.new*log(score.x)-Vtmp)/score.x)*(2*alpha.new/n)
-      A2<-.Call("coc_accum_cpp",Sx,as.numeric(w2))
+      A2<-.Call("coc_accum_cpp",Sx,as.numeric(w2),PACKAGE=.coc_v4_dll)
       theta.new<-c(eigen.solve(A2,Hx))
       # theta.new<-theta.new/sqrt(sum(theta.new^2))
-      score.x<-as.numeric(.Call("coc_score_cpp",Sx,as.numeric(theta.new)))
+      score.x<-as.numeric(.Call("coc_score_cpp",Sx,as.numeric(theta.new),PACKAGE=.coc_v4_dll))
     }else
     {
       theta.new<-theta
@@ -632,10 +807,10 @@ COCReg.D1.base<-function(Y,X,W,gamma=NULL,theta=NULL,Hy=NULL,Hx=NULL,cov.shrinka
         # }
       }
       w1<-((log(score.y)-Utmp)/score.y)*(2/n)
-      A1<-.Call("coc_accum_cpp",Sy,as.numeric(w1))
+      A1<-.Call("coc_accum_cpp",Sy,as.numeric(w1),PACKAGE=.coc_v4_dll)
       gamma.new<-c(eigen.solve(A1,Hy))
       # gamma.new<-gamma.new/sqrt(sum(gamma.new^2))
-      score.y<-as.numeric(.Call("coc_score_cpp",Sy,as.numeric(gamma.new)))
+      score.y<-as.numeric(.Call("coc_score_cpp",Sy,as.numeric(gamma.new),PACKAGE=.coc_v4_dll))
     }else
     {
       gamma.new<-gamma
@@ -689,8 +864,8 @@ COCReg.D1.base<-function(Y,X,W,gamma=NULL,theta=NULL,Hy=NULL,Hx=NULL,cov.shrinka
   }
   #---------------------------------------------
   
-  otmp<-COCReg.coef(Y,X,W,gamma.est,theta.est,cov.shrinkage.y=cov.shrinkage.y,cov.shrinkage.x=cov.shrinkage.x,max.itr=max.itr,tol=tol,trace=FALSE,score.return=score.return)
-  
+  otmp<-COCReg.coef(Y,X,W,gamma.est,theta.est,cov.shrinkage.y=cov.shrinkage.y,cov.shrinkage.x=cov.shrinkage.x,max.itr=max.itr,tol=tol,trace=FALSE,score.return=score.return,beta0=B0)
+
   if(trace)
   {
     rownames(beta.trace)<-colnames(W)
@@ -716,30 +891,32 @@ COCReg.D1.base<-function(Y,X,W,gamma=NULL,theta=NULL,Hy=NULL,Hx=NULL,cov.shrinka
   
   return(re)
 }
-COCReg.D1<-function(Y,X,W,gamma=NULL,theta=NULL,Hy=NULL,Hx=NULL,cov.shrinkage.y=TRUE,cov.shrinkage.x=TRUE,max.itr=1000,tol=1e-4,trace=FALSE,score.return=TRUE,gamma0=NULL,theta0=NULL,burn.in=1000)
+COCReg.D1<-function(Y,X,W,gamma=NULL,theta=NULL,Hy=NULL,Hx=NULL,cov.shrinkage.y=TRUE,cov.shrinkage.x=TRUE,max.itr=1000,tol=1e-4,trace=FALSE,score.return=TRUE,gamma0=NULL,theta0=NULL,burn.in=1000,beta0=NULL)
 {
   # Y: list of outcome data
   # X: list of predictor data
   # W: covariates
-  
+  # beta0 (V4): initial value(s) of beta of both COCReg.D1.base runs (each runs every initial value and keeps
+  #        the direction with the lowest objective); NULL = two, 0 and coc_beta0_v3(ncol(W))
+
   if(is.null(gamma)&is.null(theta))
   {
     otmp<-COCReg.D1.base(Y,X,W,gamma=NULL,theta=NULL,Hy=Hy,Hx=Hx,cov.shrinkage.y=cov.shrinkage.y,cov.shrinkage.x=cov.shrinkage.x,
-                         max.itr=max.itr,tol=tol,trace=trace,score.return=score.return,gamma0=gamma0,theta0=theta0,burn.in=burn.in)
+                         max.itr=max.itr,tol=tol,trace=trace,score.return=score.return,gamma0=gamma0,theta0=theta0,burn.in=burn.in,beta0=beta0)
     # update theta estimate
     re<-COCReg.D1.base(Y,X,W,gamma=otmp$gamma,theta=NULL,Hy=Hy,Hx=Hx,cov.shrinkage.y=cov.shrinkage.y,cov.shrinkage.x=cov.shrinkage.x,
-                       max.itr=max.itr,tol=tol,trace=trace,score.return=score.return,gamma0=gamma0,theta0=theta0,burn.in=burn.in)
+                       max.itr=max.itr,tol=tol,trace=trace,score.return=score.return,gamma0=gamma0,theta0=theta0,burn.in=burn.in,beta0=beta0)
   }else
   {
     re<-COCReg.D1.base(Y,X,W,gamma=gamma,theta=theta,Hy=Hy,Hx=Hx,cov.shrinkage.y=cov.shrinkage.y,cov.shrinkage.x=cov.shrinkage.x,
-                       max.itr=max.itr,tol=tol,trace=trace,score.return=score.return,gamma0=gamma0,theta0=theta0,burn.in=burn.in)
+                       max.itr=max.itr,tol=tol,trace=trace,score.return=score.return,gamma0=gamma0,theta0=theta0,burn.in=burn.in,beta0=beta0)
   }
   return(re)
 }
 
 # try several initial value of gamma and theta and optimizer over the objective function
 COCReg.D1.opt<-function(Y,X,W,gamma=NULL,theta=NULL,Hy=NULL,Hx=NULL,cov.shrinkage.y=TRUE,cov.shrinkage.x=TRUE,max.itr=1000,tol=1e-4,trace=FALSE,score.return=TRUE,burn.in=1000,
-                        gamma0.mat=NULL,theta0.mat=NULL,ninitial=NULL,seed=100)
+                        gamma0.mat=NULL,theta0.mat=NULL,ninitial=NULL,seed=100,beta0=NULL)
 {
   # Y: list of outcome data
   # X: list of predictor data
@@ -809,11 +986,11 @@ COCReg.D1.opt<-function(Y,X,W,gamma=NULL,theta=NULL,Hy=NULL,Hx=NULL,cov.shrinkag
   # mean covariance, matching COCReg.D1.base.
   if(is.null(Hx))
   {
-    Hx<-.Call("coc_accum_cpp",Sx,nxvec/sum(nxvec))
+    Hx<-.Call("coc_accum_cpp",Sx,nxvec/sum(nxvec),PACKAGE=.coc_v4_dll)
   }
   if(is.null(Hy))
   {
-    Hy<-.Call("coc_accum_cpp",Sy,nyvec/sum(nyvec))
+    Hy<-.Call("coc_accum_cpp",Sy,nyvec/sum(nyvec),PACKAGE=.coc_v4_dll)
   }
   #----------------------------------
 
@@ -865,7 +1042,7 @@ COCReg.D1.opt<-function(Y,X,W,gamma=NULL,theta=NULL,Hy=NULL,Hx=NULL,cov.shrinkag
       # gamma.tmp<-matrix(rnorm((max(q,ninitial)+1+5)*q,mean=0,sd=1),nrow=q)
       # gamma0.mat<-apply(gamma.tmp,2,function(x){return(x/sqrt(sum(x^2)))})
       
-      gamma0.mat<-Sy.bar.eigen$vectors[,1:ninitial]
+      gamma0.mat<-Sy.bar.eigen$vectors[,1:ninitial,drop=FALSE]      # V4: drop=FALSE (ninitial = 1)
     }
     # set.seed(seed)
     # gamma0.mat<-matrix(gamma0.mat[,sort(sample(1:ncol(gamma0.mat),ninitial,replace=FALSE))],ncol=ninitial)
@@ -883,7 +1060,7 @@ COCReg.D1.opt<-function(Y,X,W,gamma=NULL,theta=NULL,Hy=NULL,Hx=NULL,cov.shrinkag
       # theta.tmp<-matrix(rnorm((max(p,ninitial)+1+5)*p,mean=0,sd=1),nrow=p)
       # theta0.mat<-apply(theta.tmp,2,function(x){return(x/sqrt(sum(x^2)))})
       
-      theta0.mat<-Sx.bar.eigen$vectors[,1:ninitial]
+      theta0.mat<-Sx.bar.eigen$vectors[,1:ninitial,drop=FALSE]      # V4: drop=FALSE (ninitial = 1)
     }
     # set.seed(seed)
     # theta0.mat<-matrix(theta0.mat[,sort(sample(1:ncol(theta0.mat),ninitial,replace=FALSE))],ncol=ninitial)
@@ -895,24 +1072,69 @@ COCReg.D1.opt<-function(Y,X,W,gamma=NULL,theta=NULL,Hy=NULL,Hx=NULL,cov.shrinkag
   
   #----------------------------------
   # try different initial values with the lowest objective function
-  re.tmp<-vector("list",ninitial)
-  obj<-rep(NA,ninitial)
+  # V4: every initial value of (gamma, theta) from every initial value of beta (columns
+  # of B0); candidate (kk-1)*m0+jj is the (gamma, theta) start kk with beta start jj
+  B0<-.coc_beta0(r,beta0)
+  m0<-ncol(B0)
+  re.tmp<-vector("list",ninitial*m0)
+  obj<-rep(NA,ninitial*m0)
   for(kk in 1:ninitial)
   {
-    try(re.tmp[[kk]]<-COCReg.D1(Y,X,W,gamma=gamma,theta=theta,Hy=Hy,Hx=Hx,cov.shrinkage.y=cov.shrinkage.y,cov.shrinkage.x=cov.shrinkage.x,max.itr=max.itr,tol=tol,trace=trace,
-                                score.return=score.return,gamma0=gamma0.mat[,kk],theta0=theta0.mat[,kk],burn.in=burn.in))
-    
-    if(is.null(re.tmp[[kk]])==FALSE)
+    for(jj in 1:m0)
     {
-      gamma.unscale<-re.tmp[[kk]]$gamma/sqrt(t(re.tmp[[kk]]$gamma)%*%Hy%*%re.tmp[[kk]]$gamma)[1,1]
-      theta.unscale<-re.tmp[[kk]]$theta/sqrt(t(re.tmp[[kk]]$theta)%*%Hx%*%re.tmp[[kk]]$theta)[1,1]
-      
-      try(coef.tmp<-COCReg.coef(Y,X,W,gamma=gamma.unscale,theta=theta.unscale,cov.shrinkage.y=cov.shrinkage.y,cov.shrinkage.x=cov.shrinkage.x,max.itr=max.itr,tol=tol,trace=FALSE,score.return=score.return))
-      try(obj[kk]<-obj.func(Y,X,W,Sigma=Sy,Delta=Sx,gamma=gamma.unscale,theta=theta.unscale,alpha=coef.tmp$alpha,beta=coef.tmp$beta))
+      cc<-(kk-1)*m0+jj
+      try(re.tmp[[cc]]<-COCReg.D1(Y,X,W,gamma=gamma,theta=theta,Hy=Hy,Hx=Hx,cov.shrinkage.y=cov.shrinkage.y,cov.shrinkage.x=cov.shrinkage.x,max.itr=max.itr,tol=tol,trace=trace,
+                                  score.return=score.return,gamma0=gamma0.mat[,kk],theta0=theta0.mat[,kk],burn.in=burn.in,beta0=B0[,jj]))
+
+      if(is.null(re.tmp[[cc]])==FALSE)
+      {
+        # objective at gamma'Hy gamma = theta'Hx theta = 1, alpha/beta from every initial value of
+        # beta, the covariances of the fit (V4, .coc_dir_obj).  The coefficient fit and the objective
+        # in one try() (V3 kept the coef.tmp of the previous initial value when this one's fit
+        # failed): when they cannot be computed, obj[cc] stays NA and this candidate is not used.
+        try(obj[cc]<-.coc_dir_obj(Y,X,W,re.tmp[[cc]]$gamma,re.tmp[[cc]]$theta,Hy,Hx,Sy,Sx,
+                                  cov.shrinkage.y,cov.shrinkage.x,B0,max.itr,tol))
+      }
     }
   }
-  opt.idx<-which.min(obj)
-  re<-re.tmp[[opt.idx]]
+  # V4: the candidates in increasing order of the objective, the first one whose final alpha
+  # and beta (COCReg.coef from every initial value of beta) can be estimated; with one
+  # initial value of beta these are the candidate's own (as V3)
+  ord<-order(obj,na.last=NA)
+  if(length(ord)==0)
+  {
+    stop("COCReg.D1.opt: no initial value of gamma and theta gave an estimate.")
+  }
+  re<-NULL
+  for(opt.idx in ord)
+  {
+    if(m0>1)
+    {
+      fin<-NULL
+      try(fin<-COCReg.coef(Y,X,W,gamma=re.tmp[[opt.idx]]$gamma,theta=re.tmp[[opt.idx]]$theta,cov.shrinkage.y=cov.shrinkage.y,cov.shrinkage.x=cov.shrinkage.x,
+                           max.itr=max.itr,tol=tol,trace=FALSE,score.return=score.return,beta0=B0))
+      if(is.null(fin))
+      {
+        next
+      }
+      re<-re.tmp[[opt.idx]]
+      re$alpha<-fin$alpha
+      re$beta<-fin$beta
+      if(score.return)
+      {
+        re$score.y<-fin$score.y
+        re$score.x<-fin$score.x
+      }
+    }else
+    {
+      re<-re.tmp[[opt.idx]]
+    }
+    break
+  }
+  if(is.null(re))
+  {
+    stop("COCReg.D1.opt: alpha and beta could not be estimated for any initial value of gamma and theta.")
+  }
   #----------------------------------
   
   return(re)
@@ -924,7 +1146,7 @@ COCReg.D1.opt<-function(Y,X,W,gamma=NULL,theta=NULL,Hy=NULL,Hx=NULL,cov.shrinkag
 # Gamma0, Theta0
 # option: can choose if remove the identified direction on Y or on X
 COCReg.Dk<-function(Y,X,W,Gamma0=NULL,Theta0=NULL,remove.y=TRUE,remove.x=TRUE,Hy=NULL,Hx=NULL,cov.shrinkage.y=TRUE,cov.shrinkage.x=TRUE,max.itr=1000,tol=1e-4,trace=FALSE,score.return=TRUE,burn.in=1000,
-                    gamma0.mat=NULL,theta0.mat=NULL,ninitial=NULL,seed=100)
+                    gamma0.mat=NULL,theta0.mat=NULL,ninitial=NULL,seed=100,beta0=NULL)
 {
   # Y: list of outcome data
   # X: list of predictor data
@@ -963,7 +1185,7 @@ COCReg.Dk<-function(Y,X,W,Gamma0=NULL,Theta0=NULL,remove.y=TRUE,remove.x=TRUE,Hy
   if(is.null(Gamma0)&is.null(Theta0))
   {
     re<-COCReg.D1.opt(Y=Y,X=X,W=W,Hy=Hy,Hx=Hx,cov.shrinkage.y=cov.shrinkage.y,cov.shrinkage.x=cov.shrinkage.x,max.itr=max.itr,tol=tol,trace=trace,score.return=score.return,burn.in=burn.in,
-                      gamma0.mat=gamma0.mat,theta0.mat=theta0.mat,ninitial=ninitial,seed=seed)
+                      gamma0.mat=gamma0.mat,theta0.mat=theta0.mat,ninitial=ninitial,seed=seed,beta0=beta0)
     return(re)
   }else
   {
@@ -991,7 +1213,7 @@ COCReg.Dk<-function(Y,X,W,Gamma0=NULL,Theta0=NULL,remove.y=TRUE,remove.x=TRUE,Hy
     }
     
     re<-COCReg.D1.opt(Y=Ytmp,X=Xtmp,W=W,Hy=Hy,Hx=Hx,cov.shrinkage.y=cov.shrinkage.y,cov.shrinkage.x=cov.shrinkage.x,max.itr=max.itr,tol=tol,trace=trace,score.return=score.return,burn.in=burn.in,
-                      gamma0.mat=gamma0.mat,theta0.mat=theta0.mat,ninitial=ninitial,seed=seed)
+                      gamma0.mat=gamma0.mat,theta0.mat=theta0.mat,ninitial=ninitial,seed=seed,beta0=beta0)
     
     re$orthogonal.gamma<-c(t(re$gamma)%*%Gamma0)
     re$orthogonal.theta<-c(t(re$theta)%*%Theta0)
@@ -1043,7 +1265,7 @@ diag.level<-function(Y,Gamma)
 #################################################
 # finding first k directions
 COCReg<-function(Y,X,W,stop.crt=c("nD","DfD.y","DfD"),nD=NULL,DfD.y.thred=2,DfD.thred=2,remove.y=TRUE,remove.x=TRUE,Hy=NULL,Hx=NULL,cov.shrinkage.y=TRUE,cov.shrinkage.x=TRUE,
-                 max.itr=1000,tol=1e-4,trace=FALSE,score.return=TRUE,burn.in=1000,gamma0.mat=NULL,theta0.mat=NULL,ninitial=NULL,seed=100,verbose=TRUE)
+                 max.itr=1000,tol=1e-4,trace=FALSE,score.return=TRUE,burn.in=1000,gamma0.mat=NULL,theta0.mat=NULL,ninitial=NULL,seed=100,verbose=TRUE,beta0=NULL)
 {
   # Y: list of outcome data
   # X: list of predictor data
@@ -1115,7 +1337,7 @@ COCReg<-function(Y,X,W,stop.crt=c("nD","DfD.y","DfD"),nD=NULL,DfD.y.thred=2,DfD.
   #----------------------------------
   # First direction
   tm1<-system.time(re1<-COCReg.D1.opt(Y,X,W,Hy=Hy,Hx=Hx,cov.shrinkage.y=cov.shrinkage.y,cov.shrinkage.x=cov.shrinkage.x,max.itr=max.itr,tol=tol,trace=FALSE,
-                                      score.return=score.return,burn.in=burn.in,gamma0.mat=gamma0.mat,theta0.mat=theta0.mat,ninitial=ninitial,seed=seed))
+                                      score.return=score.return,burn.in=burn.in,gamma0.mat=gamma0.mat,theta0.mat=theta0.mat,ninitial=ninitial,seed=seed,beta0=beta0))
   
   Gamma.est<-matrix(re1$gamma,ncol=1)
   Theta.est<-matrix(re1$theta,ncol=1)
@@ -1145,7 +1367,7 @@ COCReg<-function(Y,X,W,stop.crt=c("nD","DfD.y","DfD"),nD=NULL,DfD.y.thred=2,DfD.
       {
         re.tmp<-NULL
         try(tm.tmp<-system.time(re.tmp<-COCReg.Dk(Y,X,W,Gamma0=Gamma.est,Theta0=Theta.est,remove.y=remove.y,remove.x=remove.x,Hy=Hy,Hx=Hx,cov.shrinkage.y=cov.shrinkage.y,cov.shrinkage.x=cov.shrinkage.x,
-                                                  max.itr=max.itr,tol=tol,trace=FALSE,score.return=score.return,burn.in=burn.in,gamma0.mat=gamma0.mat,theta0.mat=theta0.mat,ninitial=ninitial,seed=seed)))
+                                                  max.itr=max.itr,tol=tol,trace=FALSE,score.return=score.return,burn.in=burn.in,gamma0.mat=gamma0.mat,theta0.mat=theta0.mat,ninitial=ninitial,seed=seed,beta0=beta0)))
         if(is.null(re.tmp)==FALSE)
         {
           Gamma.est<-cbind(Gamma.est,re.tmp$gamma)
@@ -1190,7 +1412,7 @@ COCReg<-function(Y,X,W,stop.crt=c("nD","DfD.y","DfD"),nD=NULL,DfD.y.thred=2,DfD.
     {
       re.tmp<-NULL
       try(tm.tmp<-system.time(re.tmp<-COCReg.Dk(Y,X,W,Gamma0=Gamma.est,Theta0=Theta.est,remove.y=remove.y,remove.x=remove.x,Hy=Hy,Hx=Hx,cov.shrinkage.y=cov.shrinkage.y,cov.shrinkage.x=cov.shrinkage.x,
-                                                max.itr=max.itr,tol=tol,trace=FALSE,score.return=score.return,burn.in=burn.in,gamma0.mat=gamma0.mat,theta0.mat=theta0.mat,ninitial=ninitial,seed=seed)))
+                                                max.itr=max.itr,tol=tol,trace=FALSE,score.return=score.return,burn.in=burn.in,gamma0.mat=gamma0.mat,theta0.mat=theta0.mat,ninitial=ninitial,seed=seed,beta0=beta0)))
       if(is.null(re.tmp)==FALSE)
       {
         nD<-nD+1
@@ -1245,7 +1467,7 @@ COCReg<-function(Y,X,W,stop.crt=c("nD","DfD.y","DfD"),nD=NULL,DfD.y.thred=2,DfD.
     {
       re.tmp<-NULL
       try(tm.tmp<-system.time(re.tmp<-COCReg.Dk(Y,X,W,Gamma0=Gamma.est,Theta0=Theta.est,remove.y=remove.y,remove.x=remove.x,Hy=Hy,Hx=Hx,cov.shrinkage.y=cov.shrinkage.y,cov.shrinkage.x=cov.shrinkage.x,
-                                                max.itr=max.itr,tol=tol,trace=FALSE,score.return=score.return,burn.in=burn.in,gamma0.mat=gamma0.mat,theta0.mat=theta0.mat,ninitial=ninitial,seed=seed)))
+                                                max.itr=max.itr,tol=tol,trace=FALSE,score.return=score.return,burn.in=burn.in,gamma0.mat=gamma0.mat,theta0.mat=theta0.mat,ninitial=ninitial,seed=seed,beta0=beta0)))
       if(is.null(re.tmp)==FALSE)
       {
         nD<-nD+1
@@ -1315,7 +1537,7 @@ COCReg<-function(Y,X,W,stop.crt=c("nD","DfD.y","DfD"),nD=NULL,DfD.y.thred=2,DfD.
 #################################################
 # inference: bootstrap
 COCReg.coef.boot<-function(Y,X,W,gamma=NULL,theta=NULL,cov.shrinkage.y=TRUE,cov.shrinkage.x=TRUE,boot=TRUE,sims=1000,boot.ci.type=c("se","perc"),conf.level=0.95,
-                           max.itr=1000,tol=1e-4,trace=FALSE,score.return=TRUE,outlier.remove=FALSE,verbose=TRUE)
+                           max.itr=1000,tol=1e-4,trace=FALSE,score.return=TRUE,outlier.remove=FALSE,verbose=TRUE,beta0=NULL)
 {
   # Y: list of outcome data
   # X: list of predictor data
@@ -1344,6 +1566,7 @@ COCReg.coef.boot<-function(Y,X,W,gamma=NULL,theta=NULL,cov.shrinkage.y=TRUE,cov.
     if(is.null(gamma)==FALSE&is.null(theta)==FALSE)
     {
       #-------------------------------
+      B0<-.coc_beta0(r,beta0)     # V4: initial value(s) of beta of every draw
       alpha.boot<-rep(NA,sims)
       beta.boot<-matrix(NA,r,sims)
       
@@ -1358,7 +1581,7 @@ COCReg.coef.boot<-function(Y,X,W,gamma=NULL,theta=NULL,cov.shrinkage.y=TRUE,cov.
         colnames(Wtmp)<-colnames(W)
         
         re.tmp<-NULL
-        try(re.tmp<-COCReg.coef(Y=Ytmp,X=Xtmp,W=Wtmp,gamma=gamma,theta=theta,cov.shrinkage.y=cov.shrinkage.y,cov.shrinkage.x=cov.shrinkage.x,max.itr=max.itr,tol=tol,trace=FALSE,score.return=score.return))
+        try(re.tmp<-COCReg.coef(Y=Ytmp,X=Xtmp,W=Wtmp,gamma=gamma,theta=theta,cov.shrinkage.y=cov.shrinkage.y,cov.shrinkage.x=cov.shrinkage.x,max.itr=max.itr,tol=tol,trace=FALSE,score.return=score.return,beta0=B0))
         if(is.null(re.tmp)==FALSE)
         {
           alpha.boot[b]<-re.tmp$alpha

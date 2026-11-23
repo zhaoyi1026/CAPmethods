@@ -31,9 +31,22 @@
 #' Each method has a matching [cap_examples] generator producing ready-to-use
 #' data; `vignette("CAPmethods")` shows a worked, plotted run of every method.
 #'
+#' **Initial values.** Each direction is searched from several initial values
+#' (`ninitial`) and the best by the method's objective is kept (for `hdcap()` and
+#' `coc()`: the function the fit minimizes). For `hdcap()` and `coc()`/`coc_d1()` the coefficient
+#' iteration also starts from several initial values of \eqn{\beta}, argument `beta0`: a
+#' vector of length `ncol(X)` (`ncol(W)` for `coc()`), or a matrix with one
+#' initial value per column. The default `NULL` uses two, `0` and
+#' `c(0, rnorm(q - 1, 1, 1))` drawn under `set.seed(100)` (without changing the
+#' caller's random numbers); every candidate pair is run and the best kept.
+#' `hcap()` has `obj.scale`: `TRUE` (default) compares its initial values at
+#' unit-length \eqn{\gamma}, `FALSE` by the function its fit minimizes (at \eqn{\gamma' H \gamma = 1}).
+#'
 #' @param ... arguments passed to the underlying method estimator, e.g.
-#'   `stop.crt` (`"nD"` or `"DfD"`), `nD`, `DfD.thred`, `cov.shrinkage`. See
-#'   `vignette("CAPmethods")` for each method's full argument list.
+#'   `stop.crt` (`"nD"` or `"DfD"`), `nD`, `DfD.thred`, `cov.shrinkage`,
+#'   `ninitial`, and `beta0` (`hdcap()`, `coc()`, `coc_d1()`) or `obj.scale`
+#'   (`hcap()`). See `vignette("CAPmethods")` for each method's full argument
+#'   list.
 #' @return The fitted-model object from the underlying estimator: a list whose
 #'   elements depend on the method — typically the loading direction(s) `gamma`,
 #'   coefficients (`beta` and/or `alpha`), per-subject variance `score`s, and
@@ -91,7 +104,8 @@ cappcl <- function(...) .cap_get("cluster", "capPCL")(...)
 #'
 #' @param ... arguments passed to the underlying bootstrap estimator, notably
 #'   `sims` (number of replicates), the fitted loading direction, and
-#'   `conf.level`.
+#'   `conf.level`; for `hdcap_boot()` and `coc_boot()` also `beta0`, the initial
+#'   value(s) of \eqn{\beta} of every bootstrap fit (default: the two of [cap_fit]).
 #' @return A list with bootstrap standard errors and/or confidence intervals for
 #'   the method's coefficients.
 #' @seealso [cap_fit]

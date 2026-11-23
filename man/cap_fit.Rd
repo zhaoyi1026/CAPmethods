@@ -30,8 +30,10 @@ cappcl(...)
 }
 \arguments{
 \item{...}{arguments passed to the underlying method estimator, e.g.
-\code{stop.crt} (\code{"nD"} or \code{"DfD"}), \code{nD}, \code{DfD.thred}, \code{cov.shrinkage}. See
-\code{vignette("CAPmethods")} for each method's full argument list.}
+\code{stop.crt} (\code{"nD"} or \code{"DfD"}), \code{nD}, \code{DfD.thred}, \code{cov.shrinkage},
+\code{ninitial}, and \code{beta0} (\code{hdcap()}, \code{coc()}, \code{coc_d1()}) or \code{obj.scale}
+(\code{hcap()}). See \code{vignette("CAPmethods")} for each method's full argument
+list.}
 }
 \value{
 The fitted-model object from the underlying estimator: a list whose
@@ -60,6 +62,17 @@ unchanged.
 
 Each method has a matching \link{cap_examples} generator producing ready-to-use
 data; \code{vignette("CAPmethods")} shows a worked, plotted run of every method.
+
+\strong{Initial values.} Each direction is searched from several initial values
+(\code{ninitial}) and the best by the method's objective is kept (for \code{hdcap()} and
+\code{coc()}: the function the fit minimizes). For \code{hdcap()} and \code{coc()}/\code{coc_d1()} the coefficient
+iteration also starts from several initial values of \eqn{\beta}, argument \code{beta0}: a
+vector of length \code{ncol(X)} (\code{ncol(W)} for \code{coc()}), or a matrix with one
+initial value per column. The default \code{NULL} uses two, \code{0} and
+\code{c(0, rnorm(q - 1, 1, 1))} drawn under \code{set.seed(100)} (without changing the
+caller's random numbers); every candidate pair is run and the best kept.
+\code{hcap()} has \code{obj.scale}: \code{TRUE} (default) compares its initial values at
+unit-length \eqn{\gamma}, \code{FALSE} by the function its fit minimizes (at \eqn{\gamma' H \gamma = 1}).
 }
 \examples{
 d   <- hdcap_example(n = 30, Ti = 30)

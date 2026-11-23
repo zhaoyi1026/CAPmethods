@@ -13,12 +13,12 @@ This repository hosts the **R package** (below), plus a companion
 
 | Function | Method | Notes |
 |----------|--------|-------|
-| `hdcap()` | High-dimensional CAP | optional covariance shrinkage; `cov.shrinkage = FALSE` reproduces classical CAP |
+| `hdcap()` | High-dimensional CAP | optional covariance shrinkage; `cov.shrinkage = FALSE` reproduces classical CAP; several initial values of β (`beta0`) |
 | `lcap()` | Longitudinal CAP | time-invariant projection; random intercept + slopes |
 | `mcap()` | Multilevel CAP | cluster-varying loadings (von Mises–Fisher) |
-| `coc()` | Covariance-on-covariance regression | |
+| `coc()` | Covariance-on-covariance regression | several initial values of β (`beta0`) |
 | `capmediation()` | CAP mediation | |
-| `hcap()` | CAP with high-dimensional covariates | regularization and post-selection inference by multiple splitting |
+| `hcap()` | CAP with high-dimensional covariates | regularization and post-selection inference by multiple splitting; `obj.scale` sets how initial values are compared |
 | `cappcl()` | CAP clustering | covariance-matrix clustering |
 
 Each method that supports bootstrap inference also exposes a `*_boot()` companion
@@ -29,6 +29,12 @@ Each method that supports bootstrap inference also exposes a `*_boot()` companio
 Every method ships a built-in synthetic-data generator (`hdcap_example()`,
 `lcap_example()`, …) returning data in the exact shape the wrapper expects plus
 the ground truth, so a full run is two lines.
+
+Each direction is searched from several initial values, and the best by the
+method's objective is kept. Since version 0.2.0, `hdcap()` and `coc()` compare
+the initial values by the function their fit minimizes and also start the
+coefficient iteration from several initial values of β (`beta0`; by default two).
+See [NEWS.md](NEWS.md) for the changes between versions.
 
 ## Installation
 
@@ -41,7 +47,7 @@ A C++ toolchain (and BLAS/LAPACK) is needed to compile the kernels at install
 time. On macOS this means the Xcode command-line tools; on Windows, Rtools.
 
 Imported packages: MASS, glmnet, nlme, brglm2, foreach, doParallel, Rcpp
-(plus base `parallel`, `stats`, `utils`, `graphics`, `grDevices`).
+(plus base `parallel`, `stats`, `utils`).
 
 ## Quick start
 
@@ -80,7 +86,9 @@ environment** at load time, so the identically named internal helpers
 (`capReg`, `cov.ls`, `gamma.solve`, `obj.func`, …) do not collide in a single
 package namespace. All C++ kernels compile into one shared object; each carries a
 per-method symbol prefix (`hd_`, `lcap_`, `mlcap_`, `coc_`, `med_`, `hdcov_`,
-`cluster_`) and is registered in `src/init.c`.
+`cluster_`), is registered in `src/init.c`, and is called with
+`PACKAGE = "CAPmethods"`. A failed iteration in a kernel is an ordinary R error,
+caught by the methods (the initial value or bootstrap draw is skipped).
 
 ## Shiny app
 
@@ -100,9 +108,11 @@ See **[app/README.md](app/README.md)** for full install and launch instructions.
 ## Python package
 
 A companion Python package, **`capcov`** (in [`Python/`](Python/)), ports the CAP
-family to Python (numpy/scipy). Implemented and verified against this R package:
-HDCAP/CAP, CAP-CoC, LCAP, CAP-mediation, CAP-clustering (MCAP and CAP-HDcov are
-planned). Install from the cloned repository:
+family to Python (numpy/scipy). Implemented and verified against this R package
+(version 0.1.0): HDCAP/CAP, CAP-CoC, LCAP, CAP-mediation, CAP-clustering (MCAP and
+CAP-HDcov are planned). The 0.2.0 changes to HDCAP and CAP-CoC (initial values of
+β, the objective that compares initial values) are not yet ported to Python.
+Install from the cloned repository:
 
 ```bash
 git clone https://github.com/zhaoyi1026/CAPmethods.git

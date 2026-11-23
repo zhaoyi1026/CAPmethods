@@ -439,20 +439,24 @@ arma::mat compute_Hi_cpp(NumericVector Y_cov_i,
 // build_kernels.R and calls these from LCAP_varGamma.R). Symbols are mlcap_-
 // prefixed to avoid clashes with the CAP/HDCAP/LCAP kernels in the same process.
 // Only the two functions actually called from R are wrapped.
+//
+// LCAP_gamma-var/V5: the kernels of V4, unchanged, except that the two .Call
+// entry points use BEGIN_RCPP / END_RCPP (as HDCAP V8) in place of V4's own
+// try { } catch { Rf_error() }, which raised the R error (a longjmp) from inside
+// the C++ catch handler; BEGIN_RCPP/END_RCPP raise it after the handler has
+// finished.  LCAP_varGamma.R names the V5 kernel in every .Call (PACKAGE).
 // =============================================================================
 extern "C" SEXP mlcap_compute_scores_cpp(SEXP Ycov_, SEXP grnd_, SEXP nvec_) {
-  try {
+BEGIN_RCPP
     return compute_scores_cpp(as<List>(Ycov_), as<NumericMatrix>(grnd_),
                               as<IntegerVector>(nvec_));
-  } catch (std::exception& e) { Rf_error("%s", e.what()); }
-  catch (...) { Rf_error("mlcap_compute_scores_cpp: unknown C++ exception"); }
-  return R_NilValue;
+END_RCPP
 }
 
 extern "C" SEXP mlcap_obj_func_cpp(SEXP X1_, SEXP X2_, SEXP Tmat_, SEXP score_,
     SEXP grnd_, SEXP gpop_, SEXP kappa_, SEXP b0rnd_, SEXP beta1_, SEXP b2rnd_,
     SEXP beta0_, SEXP beta2_, SEXP sigma2_, SEXP Omega_, SEXP nvec_) {
-  try {
+BEGIN_RCPP
     double r = obj_func_cpp(Nullable<List>(X1_), Nullable<List>(X2_),
         as<NumericMatrix>(Tmat_), as<NumericMatrix>(score_), as<NumericMatrix>(grnd_),
         as<NumericVector>(gpop_), as<double>(kappa_), as<NumericVector>(b0rnd_),
@@ -460,7 +464,5 @@ extern "C" SEXP mlcap_obj_func_cpp(SEXP X1_, SEXP X2_, SEXP Tmat_, SEXP score_,
         as<double>(beta0_), Nullable<NumericVector>(beta2_), as<double>(sigma2_),
         Nullable<NumericMatrix>(Omega_), as<IntegerVector>(nvec_));
     return wrap(r);
-  } catch (std::exception& e) { Rf_error("%s", e.what()); }
-  catch (...) { Rf_error("mlcap_obj_func_cpp: unknown C++ exception"); }
-  return R_NilValue;
+END_RCPP
 }

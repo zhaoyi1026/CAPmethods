@@ -25,7 +25,8 @@ cappcl_boot(...)
 \arguments{
 \item{...}{arguments passed to the underlying bootstrap estimator, notably
 \code{sims} (number of replicates), the fitted loading direction, and
-\code{conf.level}.}
+\code{conf.level}; for \code{hdcap_boot()} and \code{coc_boot()} also \code{beta0}, the initial
+value(s) of \eqn{\beta} of every bootstrap fit (default: the two of \link{cap_fit}).}
 }
 \value{
 A list with bootstrap standard errors and/or confidence intervals for

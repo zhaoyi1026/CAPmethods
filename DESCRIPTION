@@ -1,8 +1,8 @@
 Package: CAPmethods
 Type: Package
 Title: Covariate-Assisted Principal (CAP) Regression Methods
-Version: 0.1.0
-Date: 2026-06-05
+Version: 0.2.0
+Date: 2026-11-23
 Authors@R: person("Yi", "Zhao", email = "zhaoyi1026@gmail.com",
                   role = c("aut", "cre"))
 Description: A unified collection of covariate-assisted principal (CAP)

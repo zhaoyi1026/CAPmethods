@@ -12,6 +12,13 @@
 // small, helpful when the response dimension p is large). See CAP-HDcov/README.md.
 //
 // Symbols are hdcov_-prefixed to avoid colliding with the other CAP kernels.
+//
+// CAP-HDcov/V3: the kernels of V2, unchanged, except that each .Call entry point
+// is wrapped in BEGIN_RCPP / END_RCPP (as HDCAP V8).  In V2 a C++ exception (e.g.
+// a conversion error, or a dimension mismatch) crossed the extern "C" boundary
+// uncaught and aborted the R process; now it is an ordinary R error, which the
+// try()/tryCatch() calls of HCAP_Code.R catch.  HCAP_Code.R names the V3 kernel
+// in every .Call (PACKAGE).
 // =============================================================================
 #include <RcppArmadillo.h>
 using namespace arma;
@@ -51,11 +58,17 @@ static mat accum_core(const cube& S, const vec& w) {
 
 // ---- extern "C" wrappers ----------------------------------------------------
 extern "C" SEXP hdcov_precompute_cpp(SEXP Y_) {
+BEGIN_RCPP
   return precompute_core(as<List>(Y_));
+END_RCPP
 }
 extern "C" SEXP hdcov_score_cpp(SEXP S_, SEXP v_) {
+BEGIN_RCPP
   return wrap(score_core(as<cube>(S_), as<vec>(v_)));
+END_RCPP
 }
 extern "C" SEXP hdcov_accum_cpp(SEXP S_, SEXP w_) {
+BEGIN_RCPP
   return wrap(accum_core(as<cube>(S_), as<vec>(w_)));
+END_RCPP
 }

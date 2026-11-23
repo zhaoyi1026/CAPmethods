@@ -7,18 +7,42 @@
 # loops (projected scores, the theta-update accumulation, eigen.solve, and the
 # per-subject sample covariance) call a compiled kernel. The mixed-effects (lme)
 # fit stays in R. See CAP-mediation/README.md.
+#
+# V5 (see CAP-mediation/README.md): the changes of HDCAP V8 and V9 that apply to
+# CAP-mediation.  The estimator, the objective and the results are those of V4:
+# - The objective that chooses among the initial values of theta (obj.func, the
+#   hierarchical likelihood of the mediator and outcome models) is already the
+#   function the iteration minimizes, with the covariances it uses (sample
+#   covariances; no shrinkage) -- the point of HDCAP V9 (1).
+# - The coefficients given theta come from least squares and lme (no initial
+#   value of the coefficients), so HDCAP V9 (2) (several initial values of beta)
+#   does not apply.
+# - As HDCAP V8: the kernel no longer aborts R on a failed iteration (an R error,
+#   caught by try()), one kernel per R version and architecture
+#   (build_kernels.R), every .Call names the V5 kernel, the folder is found from
+#   the file source() reads, and CAPMediation_D1_opt_Mcov computes the
+#   coefficients and the objective of an initial value in one try() (V4 kept the
+#   coef.tmp of the previous initial value when this one's fit failed) and stops
+#   with a clear error when no initial value gives an estimate.
 #################################################
 
 
 
 #################################################
 # Load the compiled kernel (med_kernels.cpp -> shared object), building it once
-# if necessary. Set option "med.v4.dir" or variable MED_V4_DIR to point at the
-# folder containing med_kernels.cpp; defaults to "CAP-mediation/V4".
+# if necessary.  The kernel file is named after the R version and architecture
+# (med_kernels_v5-R<major.minor>-<arch>.so, see build_kernels.R), so that
+# machines sharing this folder with different R versions each load their own build.
+# The folder: option "med.v5.dir" or variable MED_V5_DIR if set, else the folder
+# of this file when it is read with source(), else "CAP-mediation/V5", "V5" or ".".
 
+# .med_v5_dll: name of the loaded V5 kernel; every .Call() names it (PACKAGE), so
+# that a V4 kernel loaded in the same session (same symbol names, but one that
+# aborts R on a failed iteration) is never used by mistake
+.med_v5_dll <- "CAPmethods"   # CAPmethods: the kernels are registered in the package DLL
 
 # helper: per-subject sample covariance cube (== cov(M[[i]]) for all i)
-.med_cov <- function(M) .Call("med_cov_cpp", lapply(M, as.matrix))
+.med_cov <- function(M) .Call("med_cov_cpp", lapply(M, as.matrix),PACKAGE=.med_v5_dll)
 
 #################################################
 # objective function
@@ -41,7 +65,7 @@ obj.func<-function(X,Sigma,Y,nT,theta,alpha0,alpha0.rnd,alpha,beta,gamma0,gamma,
   n<-length(nT)
 
   # t(theta)%*%Sigma%*%theta  (kernel)
-  score<-as.numeric(.Call("med_score_cpp",Sigma,as.numeric(theta)))
+  score<-as.numeric(.Call("med_score_cpp",Sigma,as.numeric(theta),PACKAGE=.med_v5_dll))
 
   ll1<-sum(((alpha0.rnd+X%*%alpha)+score*exp(-alpha0.rnd-X%*%alpha))*nT)/2
   ll2<-sum((Y-gamma0-X%*%gamma-beta*log(score))^2/sigma2+log(sigma2))/2
@@ -77,7 +101,7 @@ CAPMediation_coef_Mcov<-function(X,M.cov,Y,theta)
     }
   }
   
-  score<-as.numeric(.Call("med_score_cpp",M.cov,as.numeric(theta)))
+  score<-as.numeric(.Call("med_score_cpp",M.cov,as.numeric(theta),PACKAGE=.med_v5_dll))
   
   # beta and gamma estimate
   Z<-cbind(rep(1,n),X,log(score))
@@ -129,7 +153,7 @@ CAPMediation_coef<-function(X,M,Y,theta)
 eigen.solve<-function(A,H)
 {
   # smallest generalized eigenvector of A w.r.t. H  (RcppArmadillo kernel)
-  as.numeric(.Call("med_eigen_solve_cpp", as.matrix(A), as.matrix(H)))
+  as.numeric(.Call("med_eigen_solve_cpp", as.matrix(A), as.matrix(H),PACKAGE=.med_v5_dll))
 }
 #################################################
 
@@ -202,13 +226,13 @@ CAPMediation_D1_Mcov<-function(X,M.cov,Y,nT,H=NULL,max.itr=1000,tol=1e-4,trace=F
     s<-s+1
     
     obj0<-obj.func(X,M.cov,Y,nT,theta0,alpha0.ini,alpha0.rnd.ini,alpha.ini,beta.ini,gamma0.ini,gamma.ini,tau2.ini,sigma2.ini)
-    score<-as.numeric(.Call("med_score_cpp",M.cov,as.numeric(theta0)))
+    score<-as.numeric(.Call("med_score_cpp",M.cov,as.numeric(theta0),PACKAGE=.med_v5_dll))
     
     # update theta
     U<-c(exp(-alpha0.rnd.ini-X%*%alpha.ini))
     V<-c(Y-gamma0.ini-X%*%gamma.ini)
     wA<-nT*U-(2*beta.ini*(V-beta.ini*log(score)))/(sigma2.ini*score)
-    A<-.Call("med_accum_cpp",M.cov,as.numeric(wA))
+    A<-.Call("med_accum_cpp",M.cov,as.numeric(wA),PACKAGE=.med_v5_dll)
     theta.new<-eigen.solve(A,H)
     
     otmp.new<-CAPMediation_coef_Mcov(X,M.cov,Y,theta.new)
@@ -259,7 +283,7 @@ CAPMediation_D1_Mcov<-function(X,M.cov,Y,nT,H=NULL,max.itr=1000,tol=1e-4,trace=F
     theta.est<--theta.est
   }
   otmp.est<-CAPMediation_coef_Mcov(X,M.cov,Y,theta.est)
-  score<-as.numeric(.Call("med_score_cpp",M.cov,as.numeric(theta.est)))
+  score<-as.numeric(.Call("med_score_cpp",M.cov,as.numeric(theta.est),PACKAGE=.med_v5_dll))
   obj.est<-obj.func(X,M.cov,Y,nT,theta.est,alpha0=otmp.est$alpha0,alpha0.rnd=otmp.est$alpha0.rnd,alpha=otmp.est$alpha,beta=otmp.est$beta,gamma0=otmp.est$gamma0,gamma=otmp.est$gamma,
                     tau2=otmp.est$tau2,sigma2=otmp.est$sigma2)
   
@@ -369,13 +393,22 @@ CAPMediation_D1_opt_Mcov<-function(X,M.cov,Y,nT,H=NULL,max.itr=1000,tol=1e-4,tra
     if(is.null(re.tmp[[kk]])==FALSE)
     {
       theta.unscale<-re.tmp[[kk]]$theta/sqrt(t(re.tmp[[kk]]$theta)%*%H%*%re.tmp[[kk]]$theta)[1,1]
-      
-      try(coef.tmp<-CAPMediation_coef_Mcov(X,M.cov,Y,theta=theta.unscale))
-      try(obj[kk]<-obj.func(X,M.cov,Y,nT=nT,theta=theta.unscale,alpha0=coef.tmp$alpha0,alpha0.rnd=coef.tmp$alpha0.rnd,alpha=coef.tmp$alpha,beta=coef.tmp$beta,gamma0=coef.tmp$gamma0,gamma=coef.tmp$gamma,
-                            tau2=coef.tmp$tau2,sigma2=coef.tmp$sigma2))
+
+      # V5: the coefficients and the objective of this initial value in one try() (V4 kept
+      # the coef.tmp of the previous initial value when this one's fit failed): when they
+      # cannot be computed, obj[kk] stays NA and this initial value is not used
+      try({
+        coef.tmp<-CAPMediation_coef_Mcov(X,M.cov,Y,theta=theta.unscale)
+        obj[kk]<-obj.func(X,M.cov,Y,nT=nT,theta=theta.unscale,alpha0=coef.tmp$alpha0,alpha0.rnd=coef.tmp$alpha0.rnd,alpha=coef.tmp$alpha,beta=coef.tmp$beta,gamma0=coef.tmp$gamma0,gamma=coef.tmp$gamma,
+                          tau2=coef.tmp$tau2,sigma2=coef.tmp$sigma2)
+      })
     }
   }
   opt.idx<-which.min(obj)
+  if(length(opt.idx)==0)
+  {
+    stop("CAPMediation_D1_opt: no initial value of theta gave an estimate.")
+  }
   re<-re.tmp[[opt.idx]]
   #----------------------------------
   
@@ -430,7 +463,7 @@ CAPMediation_Dk<-function(X,M,Y,H=NULL,Theta0=NULL,Y.remove=TRUE,max.itr=1000,to
     colnames(score)<-paste0("C",1:p0)
     for(kk in 1:p0)
     {
-      score[,kk]<-as.numeric(.Call("med_score_cpp",M.cov,as.numeric(Theta0[,kk])))
+      score[,kk]<-as.numeric(.Call("med_score_cpp",M.cov,as.numeric(Theta0[,kk]),PACKAGE=.med_v5_dll))
     }
     
     # estimate alpha0
@@ -871,7 +904,7 @@ CAPMediation_refit_Mcov<-function(X,M.cov,Y,Theta)
     colnames(score)<-paste0("C",1:k)
     for(jj in 1:k)
     {
-      score[,jj]<-as.numeric(.Call("med_score_cpp",M.cov,as.numeric(Theta[,jj])))
+      score[,jj]<-as.numeric(.Call("med_score_cpp",M.cov,as.numeric(Theta[,jj]),PACKAGE=.med_v5_dll))
     }
     
     # beta and gamma estimate
