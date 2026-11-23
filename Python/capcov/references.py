@@ -2,7 +2,7 @@
 
 Source of truth: ``setting.md`` in the project root. Each entry gives the
 citation, DOI, and URL for the method's paper. Methods without a publication yet
-(MCAP, CAP-HDcov, CAP-clustering) are listed with ``None``.
+(MCAP, CAP-clustering) are listed with ``None``.
 """
 from __future__ import annotations
 
@@ -54,9 +54,18 @@ REFERENCES = {
             "url": "https://doi.org/10.1093/biostatistics/kxaf004",
         },
     ],
+    "hdcov": [
+        {
+            "citation": ("He, Y., Zou, C., & Zhao, Y. (2026). Covariance regression "
+                         "with high-dimensional predictors: An application to link "
+                         "brain structural and functional connectivity. The Annals "
+                         "of Applied Statistics, 20(2), 1477-1495."),
+            "doi": "10.1214/26-AOAS2157",
+            "url": "https://doi.org/10.1214/26-AOAS2157",
+        },
+    ],
     "mcap": None,        # no publication yet
     "clustering": None,  # no publication yet
-    "hdcov": None,       # no publication yet
 }
 
 

@@ -152,9 +152,13 @@ See **[Python/USAGE.md](Python/USAGE.md)** for how to use every method, and
 - **`capmediation()` — mediation with a graph mediator**: Xu, Y., & Zhao, Y. (2025).
   Mediation analysis with graph mediator. *Biostatistics*, 26(1), kxaf004.
   <https://doi.org/10.1093/biostatistics/kxaf004>
+- **`hcap()` — CAP with high-dimensional covariates**: He, Y., Zou, C., & Zhao, Y.
+  (2026). Covariance regression with high-dimensional predictors: An application to
+  link brain structural and functional connectivity. *The Annals of Applied
+  Statistics*, 20(2), 1477–1495. <https://doi.org/10.1214/26-AOAS2157>
 
-`mcap()` (multilevel CAP), `hcap()` (CAP with high-dimensional covariates), and
-`cappcl()` (CAP clustering) do not have an associated publication listed yet.
+`mcap()` (multilevel CAP) and `cappcl()` (CAP clustering) do not have an
+associated publication listed yet.
 
 ## License
 

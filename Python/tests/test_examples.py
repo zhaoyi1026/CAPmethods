@@ -17,6 +17,7 @@ def test_references_cover_implemented_methods():
         assert isinstance(refs, list) and refs and "doi" in refs[0]
     assert REF["cap"] == "hdcap"          # CAP shares HDCAP's refs
     assert REF["clustering"] is None       # no publication yet
+    assert REF["hdcov"][0]["doi"] == "10.1214/26-AOAS2157"   # CAP-HDcov (AOAS 2026)
 
 
 def test_hdcap_example_recovers_two_directions():

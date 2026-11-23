@@ -254,8 +254,8 @@ register_method(list(
   status = "ready",
   tags = c("covariance regression", "high-dimensional covariates", "sparse", "selection inference"),
   paper = list(
-    citation = "Covariate assisted principal regression with high-dimensional covariates (see AOAS2157.pdf).",
-    url = NULL),
+    citation = "He, Y., Zou, C., & Zhao, Y. (2026). Covariance regression with high-dimensional predictors: An application to link brain structural and functional connectivity. The Annals of Applied Statistics, 20(2), 1477-1495.",
+    url = "https://doi.org/10.1214/26-AOAS2157"),
   explain = file.path(APP_DIR, "methods", "cap-hdcov", "explain.md"),
   example_note = paste("Simulated high-dimensional example: 100 subjects, p=5 responses,",
                        "q=200 covariates, Tᵢ=100, with covariate-driven directions whose",
